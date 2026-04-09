@@ -1,0 +1,30 @@
+{
+    "type": "panel",
+    "items": {
+        "refreshInterval": {
+            "type": "number",
+            "label": "Refresh Interval (seconds)",
+            "min": 10,
+            "max": 300,
+            "default": 30,
+            "sm": 12,
+            "md": 6,
+            "lg": 6
+        },
+        "devices": {
+            "type": "text",
+            "label": "Devices JSON",
+            "placeholder": "[{id:12345678,ipAddress:\"192.168.1.1\",port:6444,protocol:3,token:\"...\",key:\"...\"}]",
+            "sm": 12,
+            "md": 6,
+            "lg": 6
+        },
+        "info": {
+            "type": "staticText",
+            "text": "Format: [{\"id\":12345678,\"ipAddress\":\"192.168.1.1\",\"port\":6444,\"protocol\":3,\"token\":\"xxx\",\"key\":\"xxx\"}]",
+            "sm": 12,
+            "md": 12,
+            "lg": 12
+        }
+    }
+}

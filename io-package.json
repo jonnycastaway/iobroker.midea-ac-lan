@@ -1,0 +1,21 @@
+{
+  "common": {
+    "name": "midea-ac-lan",
+    "version": "0.1.0",
+    "title": "Midea AC LAN",
+    "desc": "Control Midea M-Smart air conditioners via local network",
+    "license": "MIT",
+    "platform": "Javascript/Node.js",
+    "mode": "daemon",
+    "node": ">=18.0.0",
+    "adminUI": {
+      "config": "json"
+    }
+  },
+  "native": {
+    "refreshInterval": 30,
+    "devices": []
+  },
+  "objects": [],
+  "states": []
+}

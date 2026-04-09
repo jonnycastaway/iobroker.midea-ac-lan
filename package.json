@@ -1,0 +1,9 @@
+{
+  "name": "iobroker.midea-ac-lan",
+  "version": "0.1.0",
+  "description": "Midea AC LAN adapter",
+  "main": "main.js",
+  "dependencies": {
+    "@iobroker/adapter-core": "^3.1.6"
+  }
+}
