@@ -4,7 +4,6 @@
         "cloudEmail": {
             "type": "text",
             "label": "Midea Cloud Email",
-            "placeholder": "your@email.com",
             "sm": 12,
             "md": 6,
             "lg": 6
@@ -12,7 +11,6 @@
         "cloudPassword": {
             "type": "password",
             "label": "Midea Cloud Password",
-            "placeholder": "Password",
             "sm": 12,
             "md": 6,
             "lg": 6
@@ -30,7 +28,6 @@
         "devices": {
             "type": "text",
             "label": "IP Addresses (one per line)",
-            "placeholder": "192.168.1.100\n192.168.1.101",
             "sm": 12,
             "md": 12,
             "lg": 12
