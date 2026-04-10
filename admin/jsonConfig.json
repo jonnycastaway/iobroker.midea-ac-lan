@@ -27,14 +27,14 @@
         },
         "devices": {
             "type": "text",
-            "label": "IP Addresses (one per line)",
+            "label": "Devices (JSON)",
             "sm": 12,
             "md": 12,
             "lg": 12
         },
         "info": {
             "type": "staticText",
-            "text": "Enter IP addresses of your AC devices. Token/Key will be fetched automatically from Midea Cloud using the credentials above.",
+            "text": "Format: [{\"ipAddress\":\"192.168.1.100\",\"token\":\"xxx\",\"key\":\"yyy\"}] - leave cloud credentials empty to skip auto-fetch",
             "sm": 12,
             "md": 12,
             "lg": 12
