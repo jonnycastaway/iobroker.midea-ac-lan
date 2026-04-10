@@ -1,6 +1,22 @@
 {
     "type": "panel",
     "items": {
+        "cloudEmail": {
+            "type": "text",
+            "label": "Midea Cloud Email",
+            "placeholder": "your@email.com",
+            "sm": 12,
+            "md": 6,
+            "lg": 6
+        },
+        "cloudPassword": {
+            "type": "password",
+            "label": "Midea Cloud Password",
+            "placeholder": "Password",
+            "sm": 12,
+            "md": 6,
+            "lg": 6
+        },
         "refreshInterval": {
             "type": "number",
             "label": "Refresh Interval (seconds)",

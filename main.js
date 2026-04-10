@@ -46,7 +46,28 @@ adapter.on('unload', async function(callback) {
 adapter.on('message', function(obj) {
     if (obj && obj.command) {
         adapter.log.info('Received message: ' + obj.command);
-        if (obj.callback) {
+        
+        if (obj.command === 'cloudLogin') {
+            const { email, password } = obj.message || {};
+            mideaAdapter.loginToCloud(email, password).then(result => {
+                if (obj.callback) {
+                    adapter.sendTo(obj.from, obj.command, { success: result }, obj.callback);
+                }
+            });
+        } else if (obj.command === 'getCloudDevices') {
+            mideaAdapter.discoverCloudDevices().then(devices => {
+                if (obj.callback) {
+                    adapter.sendTo(obj.from, obj.command, { devices: devices }, obj.callback);
+                }
+            });
+        } else if (obj.command === 'getCloudToken') {
+            const { applianceCode } = obj.message || {};
+            mideaAdapter.getCloudToken(applianceCode).then(tokenData => {
+                if (obj.callback) {
+                    adapter.sendTo(obj.from, obj.command, tokenData || {}, obj.callback);
+                }
+            });
+        } else if (obj.callback) {
             adapter.sendTo(obj.from, obj.command, {}, obj.callback);
         }
     }
