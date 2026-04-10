@@ -29,15 +29,15 @@
         },
         "devices": {
             "type": "text",
-            "label": "Devices JSON",
-            "placeholder": "[{id:12345678,ipAddress:\"192.168.1.1\",port:6444,protocol:3,token:\"...\",key:\"...\"}]",
+            "label": "IP Addresses (one per line)",
+            "placeholder": "192.168.1.100\n192.168.1.101",
             "sm": 12,
-            "md": 6,
-            "lg": 6
+            "md": 12,
+            "lg": 12
         },
         "info": {
             "type": "staticText",
-            "text": "Format: [{\"id\":12345678,\"ipAddress\":\"192.168.1.1\",\"port\":6444,\"protocol\":3,\"token\":\"xxx\",\"key\":\"xxx\"}]",
+            "text": "Enter IP addresses of your AC devices. Token/Key will be fetched automatically from Midea Cloud using the credentials above.",
             "sm": 12,
             "md": 12,
             "lg": 12

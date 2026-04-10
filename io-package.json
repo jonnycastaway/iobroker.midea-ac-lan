@@ -16,7 +16,7 @@
     "refreshInterval": 30,
     "cloudEmail": "",
     "cloudPassword": "",
-    "devices": []
+    "devices": ""
   },
   "objects": [],
   "states": []
