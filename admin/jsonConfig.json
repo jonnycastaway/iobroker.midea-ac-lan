@@ -1,51 +1,99 @@
 {
     "type": "panel",
     "items": {
-        "cloudEmail": {
-            "type": "text",
-            "label": "Midea Cloud Email",
-            "sm": 12,
-            "md": 6,
-            "lg": 6
-        },
-        "cloudPassword": {
-            "type": "password",
-            "label": "Midea Cloud Password",
-            "sm": 12,
-            "md": 6,
-            "lg": 6
-        },
-        "refreshInterval": {
-            "type": "number",
-            "label": "Refresh Interval (seconds)",
-            "min": 10,
-            "max": 300,
-            "default": 30,
-            "sm": 12,
-            "md": 6,
-            "lg": 6
-        },
-        "devices": {
-            "type": "text",
-            "label": "Devices (JSON Array)",
+        "_info": {
+            "type": "staticText",
+            "text": "Midea AC LAN Adapter - Trage die Gerätedaten ein",
             "sm": 12,
             "md": 12,
             "lg": 12,
-            "rows": 8
+            "style": "font-weight: bold; font-size: 16px; margin-bottom: 10px;"
         },
-        "info": {
+        "refreshInterval": {
+            "type": "number",
+            "label": "Refresh Interval (Sekunden)",
+            "min": 10,
+            "max": 300,
+            "default": 30,
+            "sm": 6,
+            "md": 4,
+            "lg": 4
+        },
+        "deviceId": {
+            "type": "text",
+            "label": "Device ID",
+            "placeholder": "z.B. 153931629271567",
+            "help": "Die Device ID findest du in der HA midea_ac_lan JSON",
+            "sm": 12,
+            "md": 8,
+            "lg": 8
+        },
+        "deviceName": {
+            "type": "text",
+            "label": "Gerätename (optional)",
+            "placeholder": "z.B. Wohnzimmer Klimaanlage",
+            "sm": 12,
+            "md": 4,
+            "lg": 4
+        },
+        "ipAddress": {
+            "type": "text",
+            "label": "IP Adresse",
+            "placeholder": "z.B. 192.168.66.45",
+            "sm": 12,
+            "md": 4,
+            "lg": 4
+        },
+        "port": {
+            "type": "number",
+            "label": "Port",
+            "default": 6444,
+            "min": 1,
+            "max": 65535,
+            "sm": 6,
+            "md": 2,
+            "lg": 2
+        },
+        "token": {
+            "type": "text",
+            "label": "Token",
+            "placeholder": "64 Zeichen Hex-String",
+            "sm": 12,
+            "md": 6,
+            "lg": 6
+        },
+        "key": {
+            "type": "text",
+            "label": "Key",
+            "placeholder": "64 Zeichen Hex-String",
+            "sm": 12,
+            "md": 6,
+            "lg": 6
+        },
+        "model": {
+            "type": "text",
+            "label": "Model (optional)",
+            "placeholder": "z.B. 00000Q15",
+            "sm": 12,
+            "md": 4,
+            "lg": 4
+        },
+        "subtype": {
+            "type": "number",
+            "label": "Subtype (optional)",
+            "placeholder": "0",
+            "default": 0,
+            "sm": 6,
+            "md": 2,
+            "lg": 2
+        },
+        "_help": {
             "type": "staticText",
-            "text": "Device format: [{\"id\":\"153931629271567\",\"ipAddress\":\"192.168.1.100\",\"port\":6444,\"token\":\"xxx\",\"key\":\"yyy\",\"model\":\"00000Q15\",\"subtype\":44204}]",
+            "text": "Hinweis: Token und Key erhältst du aus der Home Assistant midea_ac_lan Integration (.storage/midea_ac_lan/devices.json) oder über den Cloud-Login.",
             "sm": 12,
             "md": 12,
-            "lg": 12
-        },
-        "hint": {
-            "type": "staticText",
-            "text": "Get device info from HA midea_ac_lan integration JSON file, or run discovery to get device_id",
-            "sm": 12,
-            "md": 12,
-            "lg": 12
+            "lg": 12,
+            "style": "color: #666; font-style: italic; margin-top: 10px;"
         }
     }
 }

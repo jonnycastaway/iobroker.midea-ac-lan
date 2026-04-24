@@ -21,18 +21,16 @@ adapter.on('ready', async function() {
 adapter.on('stateChange', function(id, state) {
     if (state && !state.ack) {
         const parts = id.split('.');
-        let deviceId, stateName;
+        let stateName;
         
         if (parts[0] === 'midea-ac-lan' && parts.length >= 3) {
-            deviceId = parts[1];
             stateName = parts[2];
         } else if (parts.length >= 2) {
-            deviceId = parts[0];
             stateName = parts[1];
         }
         
-        if (deviceId && stateName) {
-            mideaAdapter.setDeviceState(deviceId, stateName, state.val);
+        if (stateName) {
+            mideaAdapter.setDeviceState(stateName, state.val);
         }
     }
 });
@@ -47,28 +45,8 @@ adapter.on('message', function(obj) {
     if (obj && obj.command) {
         adapter.log.info('Received message: ' + obj.command);
         
-        if (obj.command === 'cloudLogin') {
-            const { email, password } = obj.message || {};
-            mideaAdapter.loginToCloud(email, password).then(result => {
-                if (obj.callback) {
-                    adapter.sendTo(obj.from, obj.command, { success: result }, obj.callback);
-                }
-            });
-        } else if (obj.command === 'getCloudDevices') {
-            mideaAdapter.discoverCloudDevices().then(devices => {
-                if (obj.callback) {
-                    adapter.sendTo(obj.from, obj.command, { devices: devices }, obj.callback);
-                }
-            });
-        } else if (obj.command === 'getCloudToken') {
-            const { applianceCode } = obj.message || {};
-            mideaAdapter.getCloudToken(applianceCode).then(tokenData => {
-                if (obj.callback) {
-                    adapter.sendTo(obj.from, obj.command, tokenData || {}, obj.callback);
-                }
-            });
-        } else if (obj.callback) {
-            adapter.sendTo(obj.from, obj.command, {}, obj.callback);
+        if (obj.callback) {
+            adapter.sendTo(obj.from, obj.command, { status: 'ok' }, obj.callback);
         }
     }
 });
