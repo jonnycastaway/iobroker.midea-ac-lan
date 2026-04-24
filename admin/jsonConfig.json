@@ -1,0 +1,51 @@
+{
+    "type": "panel",
+    "items": {
+        "cloudEmail": {
+            "type": "text",
+            "label": "Midea Cloud Email",
+            "sm": 12,
+            "md": 6,
+            "lg": 6
+        },
+        "cloudPassword": {
+            "type": "password",
+            "label": "Midea Cloud Password",
+            "sm": 12,
+            "md": 6,
+            "lg": 6
+        },
+        "refreshInterval": {
+            "type": "number",
+            "label": "Refresh Interval (seconds)",
+            "min": 10,
+            "max": 300,
+            "default": 30,
+            "sm": 12,
+            "md": 6,
+            "lg": 6
+        },
+        "devices": {
+            "type": "text",
+            "label": "Devices (JSON Array)",
+            "sm": 12,
+            "md": 12,
+            "lg": 12,
+            "rows": 8
+        },
+        "info": {
+            "type": "staticText",
+            "text": "Device format: [{\"id\":\"153931629271567\",\"ipAddress\":\"192.168.1.100\",\"port\":6444,\"token\":\"xxx\",\"key\":\"yyy\",\"model\":\"00000Q15\",\"subtype\":44204}]",
+            "sm": 12,
+            "md": 12,
+            "lg": 12
+        },
+        "hint": {
+            "type": "staticText",
+            "text": "Get device info from HA midea_ac_lan integration JSON file, or run discovery to get device_id",
+            "sm": 12,
+            "md": 12,
+            "lg": 12
+        }
+    }
+}

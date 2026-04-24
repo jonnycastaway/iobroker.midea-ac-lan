@@ -1,0 +1,10 @@
+{
+  "name": "iobroker.midea-ac-lan",
+  "version": "0.2.0",
+  "description": "Midea AC LAN adapter - Control Midea M-Smart AC via LAN (v3 protocol)",
+  "main": "main.js",
+  "dependencies": {
+    "@iobroker/adapter-core": "^3.1.6",
+    "midealocal": "^6.5.0"
+  }
+}
