@@ -1,0 +1,85 @@
+{
+  "common": {
+    "name": "midea-ac",
+    "version": "0.1.0",
+    "news": {
+      "0.1.0": {
+        "en": "Initial release",
+        "de": "Erstveröffentlichung"
+      }
+    },
+    "title": "Midea AC (local V3)",
+    "titleLang": {
+      "en": "Midea AC (local V3)",
+      "de": "Midea Klimaanlage (lokal V3)"
+    },
+    "desc": {
+      "en": "Control Midea/Rotenso/Comfee M-Smart AC units via LAN using protocol V3",
+      "de": "Midea/Rotenso/Comfee M-Smart Klimaanlagen über LAN mit Protokoll V3 steuern"
+    },
+    "authors": ["Your Name <you@example.com>"],
+    "keywords": ["midea", "ac", "air-conditioner", "climate", "lan", "v3"],
+    "license": "MIT",
+    "platform": "Javascript/Node.js",
+    "main": "main.js",
+    "icon": "admin/midea-ac.png",
+    "enabled": true,
+    "extIcon": "",
+    "readme": "",
+    "loglevel": "info",
+    "mode": "daemon",
+    "type": "climate-control",
+    "messagebox": false,
+    "adminUI": {
+      "config": "json"
+    },
+    "connectionType": "local",
+    "dataSource": "push"
+  },
+  "native": {
+    "ip_address": "",
+    "port": 6444,
+    "device_id": "",
+    "token": "",
+    "key": "",
+    "poll_interval": 30
+  },
+  "objects": [
+    {
+      "_id": "info",
+      "type": "channel",
+      "common": {
+        "name": "Information"
+      },
+      "native": {}
+    },
+    {
+      "_id": "info.connection",
+      "type": "state",
+      "common": {
+        "name": "Connection status",
+        "type": "boolean",
+        "role": "indicator.connected",
+        "read": true,
+        "write": false,
+        "def": false
+      },
+      "native": {}
+    }
+  ],
+  "instanceObjects": [
+    {
+      "_id": "info.connection",
+      "type": "state",
+      "common": {
+        "name": "Connection status",
+        "type": "boolean",
+        "role": "indicator.connected",
+        "read": true,
+        "write": false,
+        "def": false
+      },
+      "native": {}
+    }
+  ]
+}
