@@ -10,12 +10,13 @@ const net    = require('net');
 const crypto = require('crypto');
 
 // ─── 8370 Protokoll ───────────────────────────────────────────────────────────
-// Header (8 Bytes): magic(2) + payloadLen(2) + msgType(1) + pad(1) + reserved(2)
-// Bestätigt durch pcap: 8370 0040 20 00 0000 <64-byte-token>
-const MAGIC_8370 = Buffer.from([0x83, 0x70]);
-const MSGTYPE_HANDSHAKE = 0x20;
-const MSGTYPE_REQUEST   = 0x03;
-const MSGTYPE_RESPONSE  = 0x04;
+// Header (6 Bytes): magic(2) + sizeField(2) + 0x20(1) + (padding<<4|msgtype)(1)
+// Body: counter(2) + [AES-CBC encrypted data] + [SHA256 sign(32)]  — nur bei Encrypted
+// sizeField = original_data_len + padding + 32(sign), total = sizeField + 8
+const MSGTYPE_HANDSHAKE_REQ  = 0x00;  // low nibble of byte 5
+const MSGTYPE_HANDSHAKE_RESP = 0x01;
+const MSGTYPE_ENC_RESPONSE   = 0x03;
+const MSGTYPE_ENC_REQUEST    = 0x06;
 
 // ─── AC Frame-Konstanten (nach msmart-ng frame.py / command.py) ───────────────
 const FRAME_HEADER_LEN  = 10;
@@ -230,75 +231,117 @@ function parseStateResponse(plain) {
 // ─── MideaV3 Kommunikationsklasse ────────────────────────────────────────────
 class MideaV3 {
     constructor(ip, port, token, key, log) {
-        this.ip    = ip;
-        this.port  = port;
-        this.token = Buffer.from(token, 'hex');
-        this.key   = Buffer.from(key,   'hex');
-        this.log   = log;
+        this.ip       = ip;
+        this.port     = port;
+        this.token    = Buffer.from(token, 'hex');
+        this.key      = Buffer.from(key,   'hex');
+        this.log      = log;
         this.tcpKey   = null;
         this.socket   = null;
         this.rxBuf    = Buffer.alloc(0);
         this._pending = null;
+        this._reqCount = 0;
+    }
+
+    _cbcMode() {
+        // Key-Länge bestimmt AES-Variante (16 B → 128, 32 B → 256)
+        return this.tcpKey.length === 16 ? 'aes-128-cbc' : 'aes-256-cbc';
     }
 
     _aesEncrypt(plain) {
-        const pad = (16 - (plain.length % 16)) % 16;
-        const padded = Buffer.concat([plain, Buffer.alloc(pad, 0)]);
-        const c = crypto.createCipheriv('aes-256-ecb', this.tcpKey, null);
+        // plain muss bereits auf 16 Bytes ausgerichtet sein
+        const c = crypto.createCipheriv(this._cbcMode(), this.tcpKey, Buffer.alloc(16, 0));
         c.setAutoPadding(false);
-        return Buffer.concat([c.update(padded), c.final()]);
+        return Buffer.concat([c.update(plain), c.final()]);
     }
 
     _aesDecrypt(enc) {
         if (enc.length === 0) return Buffer.alloc(0);
-        const d = crypto.createDecipheriv('aes-256-ecb', this.tcpKey, null);
+        const d = crypto.createDecipheriv(this._cbcMode(), this.tcpKey, Buffer.alloc(16, 0));
         d.setAutoPadding(false);
         return Buffer.concat([d.update(enc), d.final()]);
     }
 
     _deriveKey(responsePacket) {
-        // 8-Byte-Header überspringen, dann 64 Bytes Payload
+        // Aufbau bytes 8–71 der HS-Antwort (64 B):
+        //   [0..31]  AES-CBC-verschlüsselt(device_random) mit Original-Key
+        //   [32..63] SHA256(device_random)
+        // TCP-Key = XOR(device_random, original_key)
         const payload = responsePacket.slice(8, 72);
         if (payload.length < 64) throw new Error('HS-Antwort zu kurz: ' + payload.length);
-        const xored = Buffer.alloc(32);
-        for (let i = 0; i < 32; i++) xored[i] = payload[i] ^ this.key[i];
-        const inner    = crypto.createHash('sha256').update(xored).digest();
-        const combined = Buffer.concat([inner, payload.slice(32, 64)]);
-        this.tcpKey    = crypto.createHash('sha256').update(combined).digest();
+
+        const mode = this.key.length === 16 ? 'aes-128-cbc' : 'aes-256-cbc';
+        const d    = crypto.createDecipheriv(mode, this.key, Buffer.alloc(16, 0));
+        d.setAutoPadding(false);
+        const plain = Buffer.concat([d.update(payload.slice(0, 32)), d.final()]);
+
+        const expected = crypto.createHash('sha256').update(plain).digest();
+        if (!expected.equals(payload.slice(32, 64)))
+            throw new Error('Handshake: Signatur stimmt nicht — Token/Key falsch?');
+
+        this.tcpKey = Buffer.alloc(plain.length);
+        for (let i = 0; i < plain.length; i++) this.tcpKey[i] = plain[i] ^ this.key[i];
         this.log.debug('TCP-Key: ' + this.tcpKey.toString('hex'));
     }
 
     _wrap8370(acFrame) {
-        const enc = this._aesEncrypt(acFrame);
-        const hdr = Buffer.alloc(8, 0x00);
-        MAGIC_8370.copy(hdr, 0);
-        hdr.writeUInt16BE(enc.length, 2);
-        hdr[4] = MSGTYPE_REQUEST;
-        return Buffer.concat([hdr, enc]);
+        // Padding berechnen: (acFrame.length + 2) % 16 == 0 erforderlich
+        const n = acFrame.length;
+        const padding = ((n + 2) % 16 === 0) ? 0 : 16 - ((n + 2) % 16);
+
+        // 6-Byte-Header
+        const hdr = Buffer.alloc(6, 0x00);
+        hdr[0] = 0x83; hdr[1] = 0x70;
+        hdr.writeUInt16BE(n + padding + 32, 2);   // sizeField = data + padding + sign
+        hdr[4] = 0x20;                            // immer 0x20
+        hdr[5] = (padding << 4) | MSGTYPE_ENC_REQUEST;
+
+        // Body vor Verschlüsselung: counter(2B) + acFrame + random_padding
+        const countBuf = Buffer.alloc(2);
+        countBuf.writeUInt16BE(this._reqCount);
+        this._reqCount = (this._reqCount + 1) & 0xFFFF;
+        const randPad  = padding > 0 ? crypto.randomBytes(padding) : Buffer.alloc(0);
+        const plain    = Buffer.concat([countBuf, acFrame, randPad]);
+
+        // Signatur = SHA256(header + plain)
+        const sign = crypto.createHash('sha256').update(Buffer.concat([hdr, plain])).digest();
+        const enc  = this._aesEncrypt(plain);
+
+        return Buffer.concat([hdr, enc, sign]);
     }
 
     _tryConsume() {
-        if (this.rxBuf.length < 8) return null;
+        if (this.rxBuf.length < 6) return null;
         if (this.rxBuf[0] !== 0x83 || this.rxBuf[1] !== 0x70) {
             const next = this.rxBuf.indexOf(0x83, 1);
             this.rxBuf = next >= 0 ? this.rxBuf.slice(next) : Buffer.alloc(0);
             return null;
         }
-        const payLen = this.rxBuf.readUInt16BE(2);
-        const total  = 8 + payLen;
+        const sizeField = this.rxBuf.readUInt16BE(2);
+        const total     = sizeField + 8;           // total = sizeField + 8
         if (this.rxBuf.length < total) return null;
 
         const packet  = this.rxBuf.slice(0, total);
         this.rxBuf    = this.rxBuf.slice(total);
-        const msgType = packet[4];
+        const msgType = packet[5] & 0x0F;          // Typ im unteren Nibble von Byte 5
+        const padLen  = packet[5] >> 4;
 
         this.log.debug('RX type=0x' + msgType.toString(16) + ' (' + total + 'B): ' + packet.toString('hex'));
 
-        if (msgType === MSGTYPE_HANDSHAKE) {
+        if (msgType === MSGTYPE_HANDSHAKE_RESP) {
             return { type: 'handshake', raw: packet };
         }
-        if (msgType === MSGTYPE_RESPONSE) {
-            const plain = this._aesDecrypt(packet.slice(10));
+        if (msgType === MSGTYPE_ENC_RESPONSE) {
+            // Body = AES-CBC(counter + data + padding), letzten 32 B = SHA256-Sign
+            const encBody  = packet.slice(6, total - 32);
+            const rxSign   = packet.slice(total - 32);
+            const hdr6     = packet.slice(0, 6);
+            const decFull  = this._aesDecrypt(encBody);
+            const expSign  = crypto.createHash('sha256').update(Buffer.concat([hdr6, decFull])).digest();
+            if (!expSign.equals(rxSign)) throw new Error('Response: Signatur stimmt nicht');
+            // Padding und Counter entfernen
+            const noPad  = padLen > 0 ? decFull.slice(0, -padLen) : decFull;
+            const plain  = noPad.slice(2);          // 2-Byte-Counter abschneiden
             return { type: 'response', plain };
         }
         return { type: 'unknown', raw: packet };
@@ -359,11 +402,14 @@ class MideaV3 {
             });
         });
 
-        // Handshake: 8370-Header (8B) + Token (64B)
-        const hsPacket = Buffer.alloc(8 + this.token.length, 0x00);
-        MAGIC_8370.copy(hsPacket, 0);
-        hsPacket.writeUInt16BE(this.token.length, 2);
-        hsPacket[4] = MSGTYPE_HANDSHAKE;
+        // Handshake: 6-Byte-Header + counter(2B=0) + Token(64B)
+        // Struktur identisch mit encode_8370(token, HANDSHAKE_REQUEST=0x00)
+        const hsPacket = Buffer.alloc(6 + 2 + this.token.length, 0x00);
+        hsPacket[0] = 0x83; hsPacket[1] = 0x70;
+        hsPacket.writeUInt16BE(this.token.length, 2);  // sizeField = token.length
+        hsPacket[4] = 0x20;
+        hsPacket[5] = MSGTYPE_HANDSHAKE_REQ;           // 0x00
+        // bytes 6-7: counter = 0x0000
         this.token.copy(hsPacket, 8);
         this.log.debug('HS senden (' + hsPacket.length + 'B): ' + hsPacket.toString('hex'));
         this.socket.write(hsPacket);
