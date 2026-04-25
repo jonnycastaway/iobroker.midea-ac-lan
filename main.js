@@ -1,39 +1,37 @@
 'use strict';
 
+/**
+ * ioBroker Adapter für Midea AC-Geräte mit Protokoll V3 (8370)
+ * Frame-Format verifiziert gegen msmart-ng (mill1000/midea-msmart)
+ */
+
 const utils  = require('@iobroker/adapter-core');
 const net    = require('net');
 const crypto = require('crypto');
 
-// ─── 8370 Protokoll-Header (8 Bytes) ─────────────────────────────────────────
-// [0-1] magic:   0x83 0x70
-// [2-3] paylen:  uint16be  (Länge der Nutzdaten NACH dem Header)
-// [4]   msgtype: 0x20=Handshake, 0x03=Req, 0x04=Resp
-// [5]   padding: 0x00
-// [6-7] reserved/flags: 0x00 0x00
-// [8..] payload
-
-const MAGIC = Buffer.from([0x83, 0x70]);
-const MSGTYPE_HANDSHAKE_REQUEST  = 0x20;
-const MSGTYPE_ENCRYPTED_REQUEST  = 0x03;
-const MSGTYPE_ENCRYPTED_RESPONSE = 0x04;
-
+// ─── 8370 Protokoll ───────────────────────────────────────────────────────────
+// Header (8 Bytes): magic(2) + payloadLen(2) + msgType(1) + pad(1) + reserved(2)
 // Bestätigt durch pcap: 8370 0040 20 00 0000 <64-byte-token>
-//                             ^^^^ ^^ ^^ ^^^^
-//                              len typ pad rsv
+const MAGIC_8370 = Buffer.from([0x83, 0x70]);
+const MSGTYPE_HANDSHAKE = 0x20;
+const MSGTYPE_REQUEST   = 0x03;
+const MSGTYPE_RESPONSE  = 0x04;
 
-const AC_CMD_STATUS = 0x41;
-const AC_CMD_SET    = 0x40;
+// ─── AC Frame-Konstanten (nach msmart-ng frame.py / command.py) ───────────────
+const FRAME_HEADER_LEN  = 10;
+const FRAME_TYPE_QUERY  = 0x03;
+const FRAME_TYPE_CONTROL = 0x02;
+const DEVICE_TYPE_AC    = 0xAC;
 
+// Betriebsmodi
 const MODES     = { 1: 'auto', 2: 'cool', 3: 'dry', 4: 'heat', 5: 'fan_only' };
 const MODES_REV = { auto: 1, cool: 2, dry: 3, heat: 4, fan_only: 5 };
-const FAN_SPEEDS     = { 20: 'silent', 40: 'low', 60: 'medium', 80: 'high', 101: 'auto', 102: 'turbo' };
-const FAN_SPEEDS_REV = { silent: 20, low: 40, medium: 60, high: 80, auto: 101, turbo: 102 };
 
-const CONNECT_TIMEOUT_MS = 10000;
-const READ_TIMEOUT_MS    = 10000;
-const POST_HANDSHAKE_DELAY_MS = 1000;  // Gerät braucht kurze Pause nach HS
+const CONNECT_TIMEOUT_MS   = 10000;
+const READ_TIMEOUT_MS      = 10000;
+const POST_HANDSHAKE_DELAY = 1000;
 
-// ─── CRC8 ────────────────────────────────────────────────────────────────────
+// ─── CRC8 (Midea) ─────────────────────────────────────────────────────────────
 const CRC8_TABLE = [
     0x00,0x07,0x0E,0x09,0x1C,0x1B,0x12,0x15,0x38,0x3F,0x36,0x31,0x24,0x23,0x2A,0x2D,
     0x70,0x77,0x7E,0x79,0x6C,0x6B,0x62,0x65,0x48,0x4F,0x46,0x41,0x54,0x53,0x5A,0x5D,
@@ -58,42 +56,179 @@ function crc8(data) {
     return v;
 }
 
-// ─── 8370 Paket bauen ─────────────────────────────────────────────────────────
-function build8370(msgtype, payload) {
-    // Header ist immer 8 Bytes: magic(2) + len(2) + type(1) + pad(1) + reserved(2)
-    const hdr = Buffer.alloc(8, 0x00);
-    MAGIC.copy(hdr, 0);
-    hdr.writeUInt16BE(payload.length, 2);
-    hdr[4] = msgtype;
-    // hdr[5] = 0x00 (pad), hdr[6-7] = 0x00 0x00 (reserved) — bereits 0 durch alloc
-    return Buffer.concat([hdr, payload]);
+// Rahmen-Checksumme: (~sum(data) + 1) & 0xFF
+function frameChecksum(data) {
+    let s = 0;
+    for (const b of data) s = (s + b) & 0xFF;
+    return (~s + 1) & 0xFF;
 }
 
-// ─── AC Frame ────────────────────────────────────────────────────────────────
-function buildACFrame(cmd, params = {}) {
-    const msg = Buffer.alloc(40, 0x00);
-    msg[0] = 0xAA; msg[1] = 0x23; msg[2] = 0xAC; msg[8] = 0x03; msg[9] = cmd;
-    if (cmd === AC_CMD_STATUS) {
-        msg[10] = 0xFF; msg[11] = 0x03; msg[12] = 0xFF; msg[14] = 0x02;
-        msg[21] = 0xFF; msg[22] = 0xFF;
-    } else if (cmd === AC_CMD_SET) {
-        const p = params;
-        msg[10] = (p.power ? 0x40 : 0x00) | ((p.mode || 2) & 0x0F);
-        msg[11] = Math.round((p.temperature || 24) * 2) & 0x1F;
-        msg[12] = (p.fan_speed || 101) & 0x7F;
-        msg[13] = (p.swing_horizontal ? 0x0F : 0x00) | (p.swing_vertical ? 0xF0 : 0x00);
-        msg[14] = (p.eco   ? 0x80 : 0x00);
-        msg[18] = (p.turbo ? 0x20 : 0x00) | (p.sleep ? 0x01 : 0x00);
-        msg[21] = 0xFF; msg[22] = 0xFF;
+// ─── AC Frame bauen (nach msmart-ng frame.py + command.py) ───────────────────
+// Frame-Struktur:
+//   [0]     0xAA  start
+//   [1]     len(payload) + HEADER_LEN  (Gesamtlänge - 1, da [0] nicht mitgezählt)
+//   [2]     0xAC  device type
+//   [3..7]  0x00  padding
+//   [8]     0x00  protocol version
+//   [9]     frame_type  (0x03=QUERY, 0x02=CONTROL)
+//   [10..n] cmd-Nutzdaten + message_id + CRC8(nutzdaten+msg_id)
+//   [last]  frameChecksum(frame[1:-1])
+let _messageId = 0;
+function nextMessageId() { return (++_messageId) & 0xFF; }
+
+function buildFrame(frameType, payload) {
+    const msgId = nextMessageId();
+    const payloadWithId = Buffer.concat([payload, Buffer.from([msgId])]);
+    const crcByte = crc8(payloadWithId);
+    const data = Buffer.concat([payloadWithId, Buffer.from([crcByte])]);
+
+    const header = Buffer.alloc(FRAME_HEADER_LEN, 0x00);
+    header[0] = 0xAA;
+    header[1] = data.length + FRAME_HEADER_LEN;  // Gesamtlänge inkl. Header
+    header[2] = DEVICE_TYPE_AC;
+    header[8] = 0x00;  // protocol version
+    header[9] = frameType;
+
+    const frame = Buffer.concat([header, data]);
+    const chk = frameChecksum(frame.slice(1));
+    return Buffer.concat([frame, Buffer.from([chk])]);
+}
+
+function buildGetStateFrame() {
+    // GetStateCommand.tobytes() aus msmart-ng:
+    // 0x41, 0x81, 0x00, 0xFF, 0x03, 0xFF, 0x00,
+    // temperature_type(0x02=INDOOR), 0x00*12, 0x03
+    const payload = Buffer.from([
+        0x41,                   // GET_STATE cmd
+        0x81, 0x00, 0xFF, 0x03, 0xFF, 0x00,
+        0x02,                   // temperature_type = INDOOR
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x03,                   // unknown
+    ]);
+    return buildFrame(FRAME_TYPE_QUERY, payload);
+}
+
+function buildSetStateFrame(p) {
+    // SetStateCommand.tobytes() aus msmart-ng
+    const power    = p.power ? 0x01 : 0x00;
+    const beep     = 0x40;  // Beep on
+    const ctrlSrc  = 0x02;  // App control
+
+    // Temperatur-Encoding: (temp - 16) & 0xF, plus 0x10 für halbe Grade
+    const tempInt  = Math.floor(p.temperature || 24);
+    const tempHalf = ((p.temperature || 24) % 1) >= 0.5 ? 0x10 : 0x00;
+    const tempEnc  = ((tempInt - 16) & 0xF) | tempHalf;
+
+    const mode     = ((MODES_REV[p.mode] || 2) & 0x7) << 5;
+    const fanSpeed = p.fan_speed || 102;  // 102=auto
+    const swingMode = 0x30 | (p.swing_mode || 0);
+    const eco      = p.eco   ? 0x80 : 0x00;
+    const turboAlt = p.turbo ? 0x20 : 0x00;
+    const sleep    = p.sleep ? 0x01 : 0x00;
+    const turbo    = p.turbo ? 0x02 : 0x00;
+
+    const payload = Buffer.from([
+        0x40,                       // SET_STATE cmd
+        ctrlSrc | beep | power,     // beep + power
+        tempEnc | mode,             // temperature + mode
+        fanSpeed,
+        0x7F, 0x7F, 0x00,          // timer off
+        swingMode,
+        turboAlt,                   // follow_me | turbo_alt
+        eco,                        // eco
+        sleep | turbo,              // sleep + turbo
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00,
+        0x00,                       // temperature_alt
+        0x00,                       // target_humidity
+        0x00,
+        0x00,                       // freeze_protection
+        0x00,                       // independent_aux_heat
+        0x00,
+    ]);
+    return buildFrame(FRAME_TYPE_CONTROL, payload);
+}
+
+// ─── AC Status-Response parsen (nach msmart-ng StateResponse._parse) ──────────
+// Der Frame kommt vom Gerät über 8370 verschlüsselt.
+// Nach der AES-Entschlüsselung beginnt bei Offset 0 der Midea-Frame (0xAA...).
+// Die Nutzdaten (payload) beginnen nach dem 10-Byte-Header, also bei offset 10.
+function parseStateResponse(plain) {
+    // 0xAA-Header finden
+    let off = -1;
+    for (let i = 0; i < plain.length; i++) {
+        if (plain[i] === 0xAA) { off = i; break; }
     }
-    msg[36] = crc8(msg.slice(10, 36));
-    let sum = 0;
-    for (let i = 1; i < 37; i++) sum = (sum + msg[i]) & 0xFF;
-    msg[37] = (~sum + 1) & 0xFF;
-    return msg.slice(0, 38);
+    if (off < 0) return null;
+
+    const frame = plain.slice(off);
+    if (frame.length < FRAME_HEADER_LEN + 5) return null;
+
+    // response_id muss 0xC0 sein (STATE)
+    const responseId = frame[FRAME_HEADER_LEN];
+    if (responseId !== 0xC0) {
+        // Kein Status-Response, ignorieren
+        return null;
+    }
+
+    // payload = frame ab Byte 10 (nach Header), ohne letztes Byte (Checksum) und CRC
+    const payload = frame.slice(FRAME_HEADER_LEN);
+
+    // Nach msmart-ng StateResponse._parse:
+    // payload[0] = response_id (0xC0)
+    // payload[1] = power | flags
+    // payload[2] = temperature (low 4 bits) + mode (high 3 bits)
+    // payload[3] = fan_speed
+    // payload[7] = swing_mode
+    // payload[8] = turbo_alt | follow_me
+    // payload[9] = eco | aux_heat | purifier
+    // payload[10] = sleep | turbo | fahrenheit
+    // payload[11] = indoor_temp
+    // payload[12] = outdoor_temp
+    // payload[13] = target_temp_alt | filter_alert
+    // payload[14] = display_on (!=0x70)
+    // payload[15] = temp decimals
+
+    const power   = !!(payload[1] & 0x01);
+    const tempRaw = payload[2] & 0x0F;
+    const tempHalf = !!(payload[2] & 0x10);
+    const temperature = tempRaw + 16.0 + (tempHalf ? 0.5 : 0.0);
+    const mode    = (payload[2] >> 5) & 0x7;
+    const fanSpeed = payload[3] & 0x7F;
+    const swingMode = payload[7] & 0x0F;
+    const turbo   = !!(payload[8] & 0x20) || !!(payload[10] & 0x02);
+    const eco     = !!(payload[9] & 0x10);
+    const sleep   = !!(payload[10] & 0x01);
+
+    // Temperaturen: (raw - 50) / 2
+    let indoorTemp  = null;
+    let outdoorTemp = null;
+    if (payload.length > 11 && payload[11] !== 0xFF) {
+        indoorTemp = (payload[11] - 50) / 2;
+    }
+    if (payload.length > 12 && payload[12] !== 0xFF) {
+        outdoorTemp = (payload[12] - 50) / 2;
+    }
+
+    return {
+        power,
+        mode:         MODES[mode] || ('mode_' + mode),
+        temperature,
+        fan_speed:    fanSpeed,
+        swing_mode:   swingMode,
+        swing_vertical:   !!(swingMode & 0x01),
+        swing_horizontal: !!(swingMode & 0x02),
+        turbo,
+        eco,
+        sleep,
+        indoor_temp:  indoorTemp,
+        outdoor_temp: outdoorTemp,
+    };
 }
 
-// ─── MideaV3 ─────────────────────────────────────────────────────────────────
+// ─── MideaV3 Kommunikationsklasse ────────────────────────────────────────────
 class MideaV3 {
     constructor(ip, port, token, key, log) {
         this.ip    = ip;
@@ -104,11 +239,9 @@ class MideaV3 {
         this.tcpKey   = null;
         this.socket   = null;
         this.rxBuf    = Buffer.alloc(0);
-        this.msgCount = 0;
         this._pending = null;
     }
 
-    // ── AES-256-ECB ──────────────────────────────────────────────────────────
     _aesEncrypt(plain) {
         const pad = (16 - (plain.length % 16)) % 16;
         const padded = Buffer.concat([plain, Buffer.alloc(pad, 0)]);
@@ -124,14 +257,10 @@ class MideaV3 {
         return Buffer.concat([d.update(enc), d.final()]);
     }
 
-    // ── TCP-Key ableiten ─────────────────────────────────────────────────────
-    // Handshake-Response: 8-Byte 8370-Header + 64 Byte Payload
-    // payload[0:32] XOR key[0:32] → SHA256 → kombiniert mit payload[32:64] → SHA256
     _deriveKey(responsePacket) {
+        // 8-Byte-Header überspringen, dann 64 Bytes Payload
         const payload = responsePacket.slice(8, 72);
-        if (payload.length < 64) {
-            throw new Error('HS-Antwort Payload zu kurz: ' + payload.length + ' (erwartet 64)');
-        }
+        if (payload.length < 64) throw new Error('HS-Antwort zu kurz: ' + payload.length);
         const xored = Buffer.alloc(32);
         for (let i = 0; i < 32; i++) xored[i] = payload[i] ^ this.key[i];
         const inner    = crypto.createHash('sha256').update(xored).digest();
@@ -140,66 +269,48 @@ class MideaV3 {
         this.log.debug('TCP-Key: ' + this.tcpKey.toString('hex'));
     }
 
-    // ── Verschlüsseltes 8370-Paket bauen ─────────────────────────────────────
-    // Format: 8370-Header(8) + msgcount(2) + encrypted(n)
-    _wrapRequest(acFrame) {
+    _wrap8370(acFrame) {
         const enc = this._aesEncrypt(acFrame);
         const countBuf = Buffer.alloc(2);
-        countBuf.writeUInt16BE(this.msgCount++ & 0xFFFF, 0);
-        const payload = Buffer.concat([countBuf, enc]);
-        return build8370(MSGTYPE_ENCRYPTED_REQUEST, payload);
+        // msgCount nicht mehr nötig — einfach 0x00 0x00 als Zähler
+        const body = Buffer.concat([countBuf, enc]);
+        const hdr  = Buffer.alloc(8, 0x00);
+        MAGIC_8370.copy(hdr, 0);
+        hdr.writeUInt16BE(body.length, 2);
+        hdr[4] = MSGTYPE_REQUEST;
+        return Buffer.concat([hdr, body]);
     }
 
-    // ── Puffer-Parser ─────────────────────────────────────────────────────────
     _tryConsume() {
         if (this.rxBuf.length < 8) return null;
-
-        // Magic prüfen
         if (this.rxBuf[0] !== 0x83 || this.rxBuf[1] !== 0x70) {
-            // Desync: bis zum nächsten 0x83 vorspulen
             const next = this.rxBuf.indexOf(0x83, 1);
             this.rxBuf = next >= 0 ? this.rxBuf.slice(next) : Buffer.alloc(0);
-            this.log.warn('8370 Desync, neu synchronisiert');
             return null;
         }
-
         const payLen = this.rxBuf.readUInt16BE(2);
         const total  = 8 + payLen;
-        if (this.rxBuf.length < total) return null;  // noch nicht komplett
+        if (this.rxBuf.length < total) return null;
 
         const packet  = this.rxBuf.slice(0, total);
         this.rxBuf    = this.rxBuf.slice(total);
         const msgType = packet[4];
 
-        this.log.debug('RX Paket type=0x' + msgType.toString(16) + ' len=' + total + ': ' + packet.toString('hex'));
+        this.log.debug('RX type=0x' + msgType.toString(16) + ' (' + total + 'B): ' + packet.toString('hex'));
 
-        if (msgType === MSGTYPE_HANDSHAKE_REQUEST) {
-            // Handshake-Response hat denselben msgtype wie Request (0x20)
+        if (msgType === MSGTYPE_HANDSHAKE) {
             return { type: 'handshake', raw: packet };
         }
-
-        if (msgType === MSGTYPE_ENCRYPTED_RESPONSE) {
-            if (this.tcpKey) {
-                // Normaler verschlüsselter Response nach Handshake
-                const encrypted = packet.slice(10);  // header(8) + count(2)
-                const plain = this._aesDecrypt(encrypted);
-                return { type: 'response', plain };
-            } else {
-                // Manche Geräte antworten auf HS mit msgtype 0x04 — als HS behandeln
-                this.log.debug('Gerät antwortete auf HS mit msgtype 0x04 — behandle als Handshake');
-                return { type: 'handshake', raw: packet };
-            }
+        if (msgType === MSGTYPE_RESPONSE) {
+            const plain = this._aesDecrypt(packet.slice(10));
+            return { type: 'response', plain };
         }
-
-        this.log.warn('Unbekannter msgtype: 0x' + msgType.toString(16));
         return { type: 'unknown', raw: packet };
     }
 
-    // ── Socket-Callbacks ─────────────────────────────────────────────────────
     _onData(chunk) {
         this.rxBuf = Buffer.concat([this.rxBuf, chunk]);
         this.log.debug('RX chunk ' + chunk.length + 'B: ' + chunk.toString('hex'));
-
         let result;
         try { result = this._tryConsume(); } catch (e) {
             this.rxBuf = Buffer.alloc(0);
@@ -222,66 +333,58 @@ class MideaV3 {
         err ? p.reject(err) : p.resolve(result);
     }
 
-    _waitPacket(timeoutMsg) {
+    _waitPacket(msg) {
         return new Promise((resolve, reject) => {
             this._pending = {
                 resolve, reject,
                 timer: setTimeout(() => {
                     this._pending = null;
-                    reject(new Error(timeoutMsg));
+                    reject(new Error(msg));
                 }, READ_TIMEOUT_MS),
             };
         });
     }
 
-    // ── Öffentliche API ───────────────────────────────────────────────────────
     async connect() {
-        // 1. TCP verbinden
         await new Promise((resolve, reject) => {
             this.socket = new net.Socket();
             this.socket.setKeepAlive(true, 5000);
             this.socket.on('data',  (c) => this._onData(c));
             this.socket.on('error', (e) => this._onError(e));
-            this.socket.on('close', () => {
-                this._settle(null, new Error('Verbindung unerwartet getrennt'));
-            });
-
+            this.socket.on('close', () => this._settle(null, new Error('Verbindung getrennt')));
             const t = setTimeout(() => {
                 this.socket.destroy();
                 reject(new Error('TCP-Connect Timeout (' + this.ip + ':' + this.port + ')'));
             }, CONNECT_TIMEOUT_MS);
-
             this.socket.connect(this.port, this.ip, () => {
                 clearTimeout(t);
-                this.log.debug('TCP verbunden mit ' + this.ip + ':' + this.port);
+                this.log.debug('Verbunden mit ' + this.ip + ':' + this.port);
                 resolve();
             });
         });
 
-        // 2. Handshake senden
-        // Format (bestätigt durch pcap): 8370 0040 20 00 0000 <64-byte-token>
-        const hsPacket = build8370(MSGTYPE_HANDSHAKE_REQUEST, this.token);
+        // Handshake: 8370-Header (8B) + Token (64B)
+        const hsPacket = Buffer.alloc(8 + this.token.length, 0x00);
+        MAGIC_8370.copy(hsPacket, 0);
+        hsPacket.writeUInt16BE(this.token.length, 2);
+        hsPacket[4] = MSGTYPE_HANDSHAKE;
+        this.token.copy(hsPacket, 8);
         this.log.debug('HS senden (' + hsPacket.length + 'B): ' + hsPacket.toString('hex'));
         this.socket.write(hsPacket);
 
-        // 3. Auf HS-Antwort warten
         const hsResult = await this._waitPacket('Handshake Timeout — prüfe IP, Port und Token');
-        // HS-Antwort enthält immer das rohe Paket in hsResult.raw
-        if (!hsResult.raw) {
-            throw new Error('Keine HS-Antwort mit raw-Daten erhalten (type=' + hsResult.type + ')');
-        }
         this._deriveKey(hsResult.raw);
+        this.log.info('Handshake OK');
 
-        // 4. Pflicht-Pause: Gerät braucht ~1s nach Handshake
-        await new Promise((r) => setTimeout(r, POST_HANDSHAKE_DELAY_MS));
-        this.log.info('Handshake OK, bereit für Befehle');
+        // Pflicht-Pause nach Handshake
+        await new Promise((r) => setTimeout(r, POST_HANDSHAKE_DELAY));
     }
 
     async sendCommand(acFrame) {
-        const packet = this._wrapRequest(acFrame);
-        this.log.debug('CMD senden (' + packet.length + 'B): ' + packet.toString('hex'));
+        const packet = this._wrap8370(acFrame);
+        this.log.debug('CMD (' + packet.length + 'B): ' + packet.toString('hex'));
         this.socket.write(packet);
-        const result = await this._waitPacket('Antwort Timeout nach Befehl');
+        const result = await this._waitPacket('Antwort Timeout');
         return result.plain;
     }
 
@@ -291,32 +394,6 @@ class MideaV3 {
         this.tcpKey = null;
         this.rxBuf  = Buffer.alloc(0);
     }
-}
-
-// ─── AC Status parsen ────────────────────────────────────────────────────────
-function parseACStatus(payload) {
-    // 0xAA-Startbyte suchen
-    let off = -1;
-    for (let i = 0; i < payload.length; i++) {
-        if (payload[i] === 0xAA) { off = i; break; }
-    }
-    if (off < 0) return null;
-    const p = payload.slice(off);
-    if (p.length < 25) return null;
-
-    return {
-        power:            !!(p[9]  & 0x40),
-        mode:             MODES[p[9] & 0x0F] || ('mode_' + (p[9] & 0x0F)),
-        temperature:      (p[10] & 0x1F) + (!!(p[10] & 0x20) ? 0.5 : 0),
-        fan_speed:        FAN_SPEEDS[p[11] & 0x7F] || String(p[11] & 0x7F),
-        swing_vertical:   !!(p[12] & 0xF0),
-        swing_horizontal: !!(p[12] & 0x0F),
-        eco:              !!(p[13] & 0x80),
-        turbo:            !!(p[14] & 0x20),
-        sleep:            !!(p[14] & 0x01),
-        indoor_temp:  (p.length > 22 && p[22] !== 0xFF) ? (p[22] - 50) / 2 : null,
-        outdoor_temp: (p.length > 23 && p[23] !== 0xFF) ? (p[23] - 50) / 2 : null,
-    };
 }
 
 // ─── Adapter ─────────────────────────────────────────────────────────────────
@@ -346,26 +423,26 @@ class MideaAcAdapter extends utils.Adapter {
 
     async _createObjects() {
         const S = [
-            { id: 'status.power',            t: 'boolean', r: 'switch.power',      n: 'Ein/Aus',                    w: false },
-            { id: 'status.mode',             t: 'string',  r: 'value',             n: 'Betriebsart',                w: false },
-            { id: 'status.temperature',      t: 'number',  r: 'value.temperature', n: 'Solltemperatur',             w: false, u: '°C' },
-            { id: 'status.fan_speed',        t: 'string',  r: 'value',             n: 'Lüftergeschwindigkeit',      w: false },
-            { id: 'status.swing_vertical',   t: 'boolean', r: 'value',             n: 'Lamelle vertikal',           w: false },
-            { id: 'status.swing_horizontal', t: 'boolean', r: 'value',             n: 'Lamelle horizontal',         w: false },
-            { id: 'status.eco',              t: 'boolean', r: 'value',             n: 'Eco-Modus',                  w: false },
-            { id: 'status.turbo',            t: 'boolean', r: 'value',             n: 'Turbo-Modus',                w: false },
-            { id: 'status.sleep',            t: 'boolean', r: 'value',             n: 'Schlaf-Modus',               w: false },
-            { id: 'status.indoor_temp',      t: 'number',  r: 'value.temperature', n: 'Innenraumtemperatur',        w: false, u: '°C' },
-            { id: 'status.outdoor_temp',     t: 'number',  r: 'value.temperature', n: 'Außentemperatur',            w: false, u: '°C' },
-            { id: 'control.power',           t: 'boolean', r: 'switch.power',      n: 'Ein/Aus schalten',           w: true  },
-            { id: 'control.mode',            t: 'string',  r: 'value',             n: 'Betriebsart setzen',         w: true  },
-            { id: 'control.temperature',     t: 'number',  r: 'value.temperature', n: 'Solltemperatur setzen',      w: true, u: '°C' },
-            { id: 'control.fan_speed',       t: 'string',  r: 'value',             n: 'Lüftergeschwindigkeit setzen', w: true },
-            { id: 'control.swing_vertical',  t: 'boolean', r: 'button',            n: 'Lamelle vertikal setzen',    w: true  },
-            { id: 'control.swing_horizontal',t: 'boolean', r: 'button',            n: 'Lamelle horizontal setzen',  w: true  },
-            { id: 'control.eco',             t: 'boolean', r: 'button',            n: 'Eco-Modus setzen',           w: true  },
-            { id: 'control.turbo',           t: 'boolean', r: 'button',            n: 'Turbo-Modus setzen',         w: true  },
-            { id: 'control.sleep',           t: 'boolean', r: 'button',            n: 'Schlaf-Modus setzen',        w: true  },
+            { id: 'status.power',           t: 'boolean', r: 'switch.power',      n: 'Ein/Aus',                    w: false },
+            { id: 'status.mode',            t: 'string',  r: 'value',             n: 'Betriebsart',                w: false },
+            { id: 'status.temperature',     t: 'number',  r: 'value.temperature', n: 'Solltemperatur',             w: false, u: '°C' },
+            { id: 'status.fan_speed',       t: 'number',  r: 'value',             n: 'Lüftergeschwindigkeit',      w: false },
+            { id: 'status.swing_vertical',  t: 'boolean', r: 'value',             n: 'Lamelle vertikal',           w: false },
+            { id: 'status.swing_horizontal',t: 'boolean', r: 'value',             n: 'Lamelle horizontal',         w: false },
+            { id: 'status.eco',             t: 'boolean', r: 'value',             n: 'Eco-Modus',                  w: false },
+            { id: 'status.turbo',           t: 'boolean', r: 'value',             n: 'Turbo-Modus',                w: false },
+            { id: 'status.sleep',           t: 'boolean', r: 'value',             n: 'Schlaf-Modus',               w: false },
+            { id: 'status.indoor_temp',     t: 'number',  r: 'value.temperature', n: 'Innenraumtemperatur',        w: false, u: '°C' },
+            { id: 'status.outdoor_temp',    t: 'number',  r: 'value.temperature', n: 'Außentemperatur',            w: false, u: '°C' },
+            { id: 'control.power',          t: 'boolean', r: 'switch.power',      n: 'Ein/Aus schalten',           w: true  },
+            { id: 'control.mode',           t: 'string',  r: 'value',             n: 'Betriebsart (auto/cool/dry/heat/fan_only)', w: true },
+            { id: 'control.temperature',    t: 'number',  r: 'value.temperature', n: 'Solltemperatur setzen (16-30)', w: true, u: '°C' },
+            { id: 'control.fan_speed',      t: 'number',  r: 'value',             n: 'Lüfter (20/40/60/80/102=auto)', w: true },
+            { id: 'control.swing_vertical', t: 'boolean', r: 'button',            n: 'Lamelle vertikal',           w: true  },
+            { id: 'control.swing_horizontal',t:'boolean', r: 'button',            n: 'Lamelle horizontal',         w: true  },
+            { id: 'control.eco',            t: 'boolean', r: 'button',            n: 'Eco-Modus',                  w: true  },
+            { id: 'control.turbo',          t: 'boolean', r: 'button',            n: 'Turbo-Modus',                w: true  },
+            { id: 'control.sleep',          t: 'boolean', r: 'button',            n: 'Schlaf-Modus',               w: true  },
         ];
         for (const s of S) {
             await this.setObjectNotExistsAsync(s.id, {
@@ -392,13 +469,18 @@ class MideaAcAdapter extends utils.Adapter {
         if (this._polling) return;
         this._polling = true;
         try {
-            const plain = await this._withDevice((d) => d.sendCommand(buildACFrame(AC_CMD_STATUS)));
-            if (!plain) { this.log.warn('Leere Antwort vom Gerät'); return; }
-            this.log.debug('Status-Rohdaten: ' + plain.toString('hex'));
-            const st = parseACStatus(plain);
-            if (!st) { this.log.warn('Parse fehlgeschlagen. Roh: ' + plain.toString('hex')); return; }
+            const plain = await this._withDevice((d) => d.sendCommand(buildGetStateFrame()));
+            if (!plain) { this.log.warn('Leere Antwort'); return; }
+            this.log.debug('Antwort-Rohdaten: ' + plain.toString('hex'));
+
+            const st = parseStateResponse(plain);
+            if (!st) {
+                this.log.warn('Kein Status-Response (0xC0) in Antwort. Roh: ' + plain.toString('hex'));
+                return;
+            }
             this.log.debug('Status: ' + JSON.stringify(st));
             this._lastState = { ...st };
+
             await this.setStateAsync('status.power',            { val: st.power,            ack: true });
             await this.setStateAsync('status.mode',             { val: st.mode,             ack: true });
             await this.setStateAsync('status.temperature',      { val: st.temperature,      ack: true });
@@ -410,6 +492,7 @@ class MideaAcAdapter extends utils.Adapter {
             await this.setStateAsync('status.sleep',            { val: st.sleep,            ack: true });
             if (st.indoor_temp  !== null) await this.setStateAsync('status.indoor_temp',  { val: st.indoor_temp,  ack: true });
             if (st.outdoor_temp !== null) await this.setStateAsync('status.outdoor_temp', { val: st.outdoor_temp, ack: true });
+
             this.setState('info.connection', true, true);
         } catch (e) {
             this.log.error('Poll-Fehler: ' + e.message);
@@ -423,27 +506,32 @@ class MideaAcAdapter extends utils.Adapter {
         if (!shortId.startsWith('control.')) return;
         const key = shortId.replace('control.', '');
         this.log.info('Steuerbefehl: ' + key + ' = ' + state.val);
+
         const cur = { ...this._lastState };
         if (key === 'power')            cur.power            = !!state.val;
         if (key === 'mode')             cur.mode             = state.val;
         if (key === 'temperature')      cur.temperature      = parseFloat(state.val);
-        if (key === 'fan_speed')        cur.fan_speed        = state.val;
+        if (key === 'fan_speed')        cur.fan_speed        = parseInt(state.val, 10);
         if (key === 'swing_vertical')   cur.swing_vertical   = !!state.val;
         if (key === 'swing_horizontal') cur.swing_horizontal = !!state.val;
         if (key === 'eco')              cur.eco              = !!state.val;
         if (key === 'turbo')            cur.turbo            = !!state.val;
         if (key === 'sleep')            cur.sleep            = !!state.val;
+
+        const swingMode = ((cur.swing_horizontal ? 0x02 : 0) | (cur.swing_vertical ? 0x01 : 0));
         const params = {
-            power:            cur.power !== undefined ? cur.power : true,
-            mode:             MODES_REV[cur.mode] || 2,
-            temperature:      cur.temperature      || 24,
-            fan_speed:        FAN_SPEEDS_REV[cur.fan_speed] || 101,
-            swing_vertical:   !!cur.swing_vertical,
-            swing_horizontal: !!cur.swing_horizontal,
-            eco: !!cur.eco, turbo: !!cur.turbo, sleep: !!cur.sleep,
+            power:       cur.power !== undefined ? cur.power : true,
+            mode:        cur.mode        || 'cool',
+            temperature: cur.temperature || 24,
+            fan_speed:   cur.fan_speed   || 102,
+            swing_mode:  swingMode,
+            eco:         !!cur.eco,
+            turbo:       !!cur.turbo,
+            sleep:       !!cur.sleep,
         };
+
         try {
-            await this._withDevice((d) => d.sendCommand(buildACFrame(AC_CMD_SET, params)));
+            await this._withDevice((d) => d.sendCommand(buildSetStateFrame(params)));
             this.log.info('Befehl gesendet');
             setTimeout(() => this._poll(), 1500);
         } catch (e) { this.log.error('Steuerfehler: ' + e.message); }
