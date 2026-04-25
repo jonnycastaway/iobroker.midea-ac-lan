@@ -29,11 +29,11 @@ Nach dem Hinzufügen einer Instanz die Admin-UI öffnen:
 
 | Feld | Beschreibung | Beispiel |
 |------|-------------|---------|
-| **IP-Adresse** | Lokale IP der Klimaanlage | `192.168.66.45` |
+| **IP-Adresse** | Lokale IP der Klimaanlage | `10.0.0.100` |
 | **Port** | TCP-Port | `6444` |
-| **Device ID** | Numerische ID | `153931629271567` |
-| **Token** | 128-stelliger Hex-String | `2e8d3e17...` |
-| **Key** | 64-stelliger Hex-String | `821df7a2...` |
+| **Device ID** | Numerische ID | `123456789012345` |
+| **Token** | 128-stelliger Hex-String | *(aus midea-discover)* |
+| **Key** | 64-stelliger Hex-String | *(aus midea-discover)* |
 | **Abfrageintervall** | Polling-Interval in Sekunden | `30` |
 
 ---
@@ -70,7 +70,7 @@ Falls du noch kein Token/Key hast, kannst du diese über die HA-Integration
 
 ```bash
 pip install midealocal
-midea-discover --ip 192.168.66.45 --account EMAIL --password PASSWORT
+midea-discover --ip 10.0.0.100 --account EMAIL --password PASSWORT
 ```
 
 ---
