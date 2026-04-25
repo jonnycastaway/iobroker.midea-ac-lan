@@ -1,28 +1,9 @@
 {
   "name": "iobroker.midea-ac-lan",
-  "version": "0.1.0",
-  "description": "ioBroker adapter for Midea M-Smart AC units via local LAN (Protocol V3)",
-  "author": "Your Name <you@example.com>",
-  "homepage": "",
-  "license": "MIT",
-  "keywords": [
-    "ioBroker",
-    "midea",
-    "air conditioner",
-    "climate",
-    "lan",
-    "v3",
-    "rotenso",
-    "comfee"
-  ],
+  "version": "0.3.0",
+  "description": "Midea AC LAN adapter - Control Midea M-Smart AC via LAN (v3 protocol)",
   "main": "main.js",
-  "scripts": {
-    "test": "echo \"No tests defined\" && exit 0"
-  },
   "dependencies": {
-    "@iobroker/adapter-core": "^3.0.0"
-  },
-  "engines": {
-    "node": ">=18"
+    "@iobroker/adapter-core": "^3.1.6"
   }
 }

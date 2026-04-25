@@ -1,111 +1,62 @@
 {
-  "type": "tabs",
-  "items": {
-    "tab_connection": {
-      "type": "tab",
-      "label": "Gerät / Device",
-      "items": {
-        "header_device": {
-          "type": "header",
-          "text": "Midea Gerätekonfiguration",
-          "size": 5
+    "type": "panel",
+    "items": {
+        "_info": {
+            "type": "staticText",
+            "text": "Midea AC LAN Adapter - Trage die Gerätedaten ein"
         },
-        "ip_address": {
-          "type": "text",
-          "label": "IP-Adresse",
-          "help": "Lokale IP-Adresse der Klimaanlage",
-          "placeholder": "z.B. 10.0.0.100",
-          "validator": "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$",
-          "validatorErrorText": "Bitte eine gültige IP-Adresse eingeben",
-          "sm": 6,
-          "xs": 12
+        "refreshInterval": {
+            "type": "number",
+            "label": "Refresh Interval (Sekunden)",
+            "min": 10,
+            "max": 300,
+            "default": 30
+        },
+        "deviceId": {
+            "type": "text",
+            "label": "Device ID",
+            "placeholder": "z.B. 153931629271567"
+        },
+        "deviceName": {
+            "type": "text",
+            "label": "Gerätename (optional)",
+            "placeholder": "z.B. Wohnzimmer Klimaanlage"
+        },
+        "ipAddress": {
+            "type": "text",
+            "label": "IP Adresse",
+            "placeholder": "z.B. 192.168.66.45"
         },
         "port": {
-          "type": "number",
-          "label": "Port",
-          "help": "TCP-Port (Standard: 6444)",
-          "min": 1,
-          "max": 65535,
-          "default": 6444,
-          "sm": 6,
-          "xs": 12
-        },
-        "device_id": {
-          "type": "text",
-          "label": "Device ID",
-          "help": "Numerische Geräte-ID (z.B. aus HA-Konfiguration)",
-          "placeholder": "z.B. 123456789012345",
-          "xs": 12
-        },
-        "header_auth": {
-          "type": "header",
-          "text": "Protokoll V3 Authentifizierung",
-          "size": 5
+            "type": "number",
+            "label": "Port",
+            "default": 6444,
+            "min": 1,
+            "max": 65535
         },
         "token": {
-          "type": "text",
-          "label": "Token",
-          "help": "128-stelliger Hex-String",
-          "placeholder": "128-stelliger Hex-String",
-          "xs": 12
+            "type": "text",
+            "label": "Token",
+            "placeholder": "64 Zeichen Hex-String"
         },
         "key": {
-          "type": "text",
-          "label": "Key (K1)",
-          "help": "64-stelliger Hex-String",
-          "placeholder": "64-stelliger Hex-String",
-          "xs": 12
+            "type": "text",
+            "label": "Key",
+            "placeholder": "64 Zeichen Hex-String"
+        },
+        "model": {
+            "type": "text",
+            "label": "Model (optional)",
+            "placeholder": "z.B. 00000Q15"
+        },
+        "subtype": {
+            "type": "number",
+            "label": "Subtype (optional)",
+            "default": 0
+        },
+        "_help": {
+            "type": "staticText",
+            "text": "Hinweis: Token und Key erhältst du aus der Home Assistant midea_ac_lan Integration (.storage/midea_ac_lan/devices.json)"
         }
-      }
-    },
-    "tab_advanced": {
-      "type": "tab",
-      "label": "Erweitert / Advanced",
-      "items": {
-        "header_poll": {
-          "type": "header",
-          "text": "Abfrageintervall",
-          "size": 5
-        },
-        "poll_interval": {
-          "type": "number",
-          "label": "Abfrageintervall (Sekunden)",
-          "help": "Wie oft der Status der Klimaanlage abgefragt wird. Empfehlung: 30–60 Sekunden.",
-          "min": 5,
-          "max": 600,
-          "default": 30,
-          "sm": 6,
-          "xs": 12
-        },
-        "header_info": {
-          "type": "header",
-          "text": "Geräteinformationen (optional, nur zur Dokumentation)",
-          "size": 5
-        },
-        "device_name": {
-          "type": "text",
-          "label": "Gerätename",
-          "help": "Frei wählbarer Name für dieses Gerät",
-          "placeholder": "Klimaanlage Wohnzimmer",
-          "xs": 12
-        },
-        "device_model": {
-          "type": "text",
-          "label": "Modell",
-          "help": "Modellbezeichnung (optional)",
-          "placeholder": "00000Q15",
-          "sm": 6,
-          "xs": 12
-        },
-        "device_type": {
-          "type": "number",
-          "label": "Gerätetyp (hex)",
-          "help": "Gerätetyp aus HA-Config (z.B. 172 = 0xAC = Klimaanlage)",
-          "default": 172,
-          "sm": 6,
-          "xs": 12
-        }
-      }
     }
-  }
 }
