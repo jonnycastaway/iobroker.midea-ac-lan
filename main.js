@@ -4,19 +4,36 @@ const utils  = require('@iobroker/adapter-core');
 const net    = require('net');
 const crypto = require('crypto');
 
-const MAGIC_8370 = Buffer.from([0x83, 0x70]);
-const MSGTYPE_HANDSHAKE_REQUEST  = 0x00;
+// ─── 8370 Protokoll-Header (8 Bytes) ─────────────────────────────────────────
+// [0-1] magic:   0x83 0x70
+// [2-3] paylen:  uint16be  (Länge der Nutzdaten NACH dem Header)
+// [4]   msgtype: 0x20=Handshake, 0x03=Req, 0x04=Resp
+// [5]   padding: 0x00
+// [6-7] reserved/flags: 0x00 0x00
+// [8..] payload
+
+const MAGIC = Buffer.from([0x83, 0x70]);
+const MSGTYPE_HANDSHAKE_REQUEST  = 0x20;
 const MSGTYPE_ENCRYPTED_REQUEST  = 0x03;
 const MSGTYPE_ENCRYPTED_RESPONSE = 0x04;
+
+// Bestätigt durch pcap: 8370 0040 20 00 0000 <64-byte-token>
+//                             ^^^^ ^^ ^^ ^^^^
+//                              len typ pad rsv
+
 const AC_CMD_STATUS = 0x41;
 const AC_CMD_SET    = 0x40;
+
 const MODES     = { 1: 'auto', 2: 'cool', 3: 'dry', 4: 'heat', 5: 'fan_only' };
 const MODES_REV = { auto: 1, cool: 2, dry: 3, heat: 4, fan_only: 5 };
 const FAN_SPEEDS     = { 20: 'silent', 40: 'low', 60: 'medium', 80: 'high', 101: 'auto', 102: 'turbo' };
 const FAN_SPEEDS_REV = { silent: 20, low: 40, medium: 60, high: 80, auto: 101, turbo: 102 };
+
 const CONNECT_TIMEOUT_MS = 10000;
 const READ_TIMEOUT_MS    = 10000;
+const POST_HANDSHAKE_DELAY_MS = 1000;  // Gerät braucht kurze Pause nach HS
 
+// ─── CRC8 ────────────────────────────────────────────────────────────────────
 const CRC8_TABLE = [
     0x00,0x07,0x0E,0x09,0x1C,0x1B,0x12,0x15,0x38,0x3F,0x36,0x31,0x24,0x23,0x2A,0x2D,
     0x70,0x77,0x7E,0x79,0x6C,0x6B,0x62,0x65,0x48,0x4F,0x46,0x41,0x54,0x53,0x5A,0x5D,
@@ -41,6 +58,18 @@ function crc8(data) {
     return v;
 }
 
+// ─── 8370 Paket bauen ─────────────────────────────────────────────────────────
+function build8370(msgtype, payload) {
+    // Header ist immer 8 Bytes: magic(2) + len(2) + type(1) + pad(1) + reserved(2)
+    const hdr = Buffer.alloc(8, 0x00);
+    MAGIC.copy(hdr, 0);
+    hdr.writeUInt16BE(payload.length, 2);
+    hdr[4] = msgtype;
+    // hdr[5] = 0x00 (pad), hdr[6-7] = 0x00 0x00 (reserved) — bereits 0 durch alloc
+    return Buffer.concat([hdr, payload]);
+}
+
+// ─── AC Frame ────────────────────────────────────────────────────────────────
 function buildACFrame(cmd, params = {}) {
     const msg = Buffer.alloc(40, 0x00);
     msg[0] = 0xAA; msg[1] = 0x23; msg[2] = 0xAC; msg[8] = 0x03; msg[9] = cmd;
@@ -64,9 +93,11 @@ function buildACFrame(cmd, params = {}) {
     return msg.slice(0, 38);
 }
 
+// ─── MideaV3 ─────────────────────────────────────────────────────────────────
 class MideaV3 {
     constructor(ip, port, token, key, log) {
-        this.ip    = ip; this.port = port;
+        this.ip    = ip;
+        this.port  = port;
         this.token = Buffer.from(token, 'hex');
         this.key   = Buffer.from(key,   'hex');
         this.log   = log;
@@ -77,29 +108,7 @@ class MideaV3 {
         this._pending = null;
     }
 
-    _buildHandshake() {
-        const buf = Buffer.alloc(6 + this.token.length);
-        MAGIC_8370.copy(buf, 0);
-        buf.writeUInt16BE(this.token.length, 2);
-        buf[4] = MSGTYPE_HANDSHAKE_REQUEST;
-        buf[5] = 0x00;
-        this.token.copy(buf, 6);
-        return buf;
-    }
-
-    _deriveKey(rawResponse) {
-        // Payload beginnt nach 8-Byte Header (6 8370-Header + 2 Byte Zähler)
-        // Bei Handshake-Response hat der 8370-Header nur 6 Bytes, kein Zähler
-        const payload = rawResponse.slice(8, 72);
-        if (payload.length < 64) throw new Error('HS-Antwort zu kurz: ' + payload.length);
-        const xored = Buffer.alloc(32);
-        for (let i = 0; i < 32; i++) xored[i] = payload[i] ^ this.key[i];
-        const inner    = crypto.createHash('sha256').update(xored).digest();
-        const combined = Buffer.concat([inner, payload.slice(32, 64)]);
-        this.tcpKey    = crypto.createHash('sha256').update(combined).digest();
-        this.log.debug('TCP-Key abgeleitet: ' + this.tcpKey.toString('hex'));
-    }
-
+    // ── AES-256-ECB ──────────────────────────────────────────────────────────
     _aesEncrypt(plain) {
         const pad = (16 - (plain.length % 16)) % 16;
         const padded = Buffer.concat([plain, Buffer.alloc(pad, 0)]);
@@ -109,60 +118,95 @@ class MideaV3 {
     }
 
     _aesDecrypt(enc) {
+        if (enc.length === 0) return Buffer.alloc(0);
         const d = crypto.createDecipheriv('aes-256-ecb', this.tcpKey, null);
         d.setAutoPadding(false);
         return Buffer.concat([d.update(enc), d.final()]);
     }
 
-    _wrap(payload) {
-        const enc = this._aesEncrypt(payload);
-        const countBuf = Buffer.alloc(2);
-        countBuf.writeUInt16BE(this.msgCount++ & 0xFFFF, 0);
-        const body = Buffer.concat([countBuf, enc]);
-        const hdr  = Buffer.alloc(6);
-        MAGIC_8370.copy(hdr, 0);
-        hdr.writeUInt16BE(body.length, 2);
-        hdr[4] = MSGTYPE_ENCRYPTED_REQUEST;
-        hdr[5] = 0x00;
-        return Buffer.concat([hdr, body]);
+    // ── TCP-Key ableiten ─────────────────────────────────────────────────────
+    // Handshake-Response: 8-Byte 8370-Header + 64 Byte Payload
+    // payload[0:32] XOR key[0:32] → SHA256 → kombiniert mit payload[32:64] → SHA256
+    _deriveKey(responsePacket) {
+        const payload = responsePacket.slice(8, 72);
+        if (payload.length < 64) {
+            throw new Error('HS-Antwort Payload zu kurz: ' + payload.length + ' (erwartet 64)');
+        }
+        const xored = Buffer.alloc(32);
+        for (let i = 0; i < 32; i++) xored[i] = payload[i] ^ this.key[i];
+        const inner    = crypto.createHash('sha256').update(xored).digest();
+        const combined = Buffer.concat([inner, payload.slice(32, 64)]);
+        this.tcpKey    = crypto.createHash('sha256').update(combined).digest();
+        this.log.debug('TCP-Key: ' + this.tcpKey.toString('hex'));
     }
 
+    // ── Verschlüsseltes 8370-Paket bauen ─────────────────────────────────────
+    // Format: 8370-Header(8) + msgcount(2) + encrypted(n)
+    _wrapRequest(acFrame) {
+        const enc = this._aesEncrypt(acFrame);
+        const countBuf = Buffer.alloc(2);
+        countBuf.writeUInt16BE(this.msgCount++ & 0xFFFF, 0);
+        const payload = Buffer.concat([countBuf, enc]);
+        return build8370(MSGTYPE_ENCRYPTED_REQUEST, payload);
+    }
+
+    // ── Puffer-Parser ─────────────────────────────────────────────────────────
     _tryConsume() {
-        // Versucht ein vollständiges 8370-Paket aus rxBuf zu lesen
-        if (this.rxBuf.length < 6) return null;
+        if (this.rxBuf.length < 8) return null;
+
+        // Magic prüfen
         if (this.rxBuf[0] !== 0x83 || this.rxBuf[1] !== 0x70) {
-            // Puffer-Desync: alles wegwerfen bis zum nächsten 0x83
+            // Desync: bis zum nächsten 0x83 vorspulen
             const next = this.rxBuf.indexOf(0x83, 1);
             this.rxBuf = next >= 0 ? this.rxBuf.slice(next) : Buffer.alloc(0);
+            this.log.warn('8370 Desync, neu synchronisiert');
             return null;
         }
-        const dataLen = this.rxBuf.readUInt16BE(2);
-        const total   = 6 + dataLen;
+
+        const payLen = this.rxBuf.readUInt16BE(2);
+        const total  = 8 + payLen;
         if (this.rxBuf.length < total) return null;  // noch nicht komplett
 
         const packet  = this.rxBuf.slice(0, total);
         this.rxBuf    = this.rxBuf.slice(total);
         const msgType = packet[4];
 
-        if (msgType === MSGTYPE_ENCRYPTED_RESPONSE) {
-            const plain = this._aesDecrypt(packet.slice(8));  // skip header(6) + counter(2)
-            return { type: 'response', plain };
+        this.log.debug('RX Paket type=0x' + msgType.toString(16) + ' len=' + total + ': ' + packet.toString('hex'));
+
+        if (msgType === MSGTYPE_HANDSHAKE_REQUEST) {
+            // Handshake-Response hat denselben msgtype wie Request (0x20)
+            return { type: 'handshake', raw: packet };
         }
-        // Handshake-Response: kein Zähler, Payload direkt nach Header
-        return { type: 'handshake', raw: packet };
+
+        if (msgType === MSGTYPE_ENCRYPTED_RESPONSE) {
+            if (this.tcpKey) {
+                // Normaler verschlüsselter Response nach Handshake
+                const encrypted = packet.slice(10);  // header(8) + count(2)
+                const plain = this._aesDecrypt(encrypted);
+                return { type: 'response', plain };
+            } else {
+                // Manche Geräte antworten auf HS mit msgtype 0x04 — als HS behandeln
+                this.log.debug('Gerät antwortete auf HS mit msgtype 0x04 — behandle als Handshake');
+                return { type: 'handshake', raw: packet };
+            }
+        }
+
+        this.log.warn('Unbekannter msgtype: 0x' + msgType.toString(16));
+        return { type: 'unknown', raw: packet };
     }
 
+    // ── Socket-Callbacks ─────────────────────────────────────────────────────
     _onData(chunk) {
         this.rxBuf = Buffer.concat([this.rxBuf, chunk]);
-        this.log.debug('RX ' + chunk.length + 'B, Puffer ' + this.rxBuf.length + 'B: ' + chunk.toString('hex'));
+        this.log.debug('RX chunk ' + chunk.length + 'B: ' + chunk.toString('hex'));
 
         let result;
         try { result = this._tryConsume(); } catch (e) {
             this.rxBuf = Buffer.alloc(0);
-            this._settle(null, e); return;
+            this._settle(null, e);
+            return;
         }
-        if (!result) return;
-        this._settle(result, null);
+        if (result) this._settle(result, null);
     }
 
     _onError(err) {
@@ -172,12 +216,13 @@ class MideaV3 {
 
     _settle(result, err) {
         if (!this._pending) return;
-        const p = this._pending; this._pending = null;
+        const p = this._pending;
+        this._pending = null;
         clearTimeout(p.timer);
         err ? p.reject(err) : p.resolve(result);
     }
 
-    _waitFor(timeoutMsg) {
+    _waitPacket(timeoutMsg) {
         return new Promise((resolve, reject) => {
             this._pending = {
                 resolve, reject,
@@ -189,67 +234,81 @@ class MideaV3 {
         });
     }
 
+    // ── Öffentliche API ───────────────────────────────────────────────────────
     async connect() {
+        // 1. TCP verbinden
         await new Promise((resolve, reject) => {
             this.socket = new net.Socket();
             this.socket.setKeepAlive(true, 5000);
             this.socket.on('data',  (c) => this._onData(c));
             this.socket.on('error', (e) => this._onError(e));
-            this.socket.on('close', () => this._settle(null, new Error('Socket unerwartet geschlossen')));
+            this.socket.on('close', () => {
+                this._settle(null, new Error('Verbindung unerwartet getrennt'));
+            });
 
-            const connTimer = setTimeout(() => {
+            const t = setTimeout(() => {
                 this.socket.destroy();
                 reject(new Error('TCP-Connect Timeout (' + this.ip + ':' + this.port + ')'));
             }, CONNECT_TIMEOUT_MS);
 
             this.socket.connect(this.port, this.ip, () => {
-                clearTimeout(connTimer);
+                clearTimeout(t);
                 this.log.debug('TCP verbunden mit ' + this.ip + ':' + this.port);
                 resolve();
             });
         });
 
-        // Handshake senden
-        const hsPacket = this._buildHandshake();
+        // 2. Handshake senden
+        // Format (bestätigt durch pcap): 8370 0040 20 00 0000 <64-byte-token>
+        const hsPacket = build8370(MSGTYPE_HANDSHAKE_REQUEST, this.token);
         this.log.debug('HS senden (' + hsPacket.length + 'B): ' + hsPacket.toString('hex'));
         this.socket.write(hsPacket);
 
-        // Auf Handshake-Antwort warten
-        const hsResult = await this._waitFor('Handshake Timeout — prüfe IP/Token');
+        // 3. Auf HS-Antwort warten
+        const hsResult = await this._waitPacket('Handshake Timeout — prüfe IP, Port und Token');
+        // HS-Antwort enthält immer das rohe Paket in hsResult.raw
+        if (!hsResult.raw) {
+            throw new Error('Keine HS-Antwort mit raw-Daten erhalten (type=' + hsResult.type + ')');
+        }
         this._deriveKey(hsResult.raw);
-        this.log.info('Handshake erfolgreich');
+
+        // 4. Pflicht-Pause: Gerät braucht ~1s nach Handshake
+        await new Promise((r) => setTimeout(r, POST_HANDSHAKE_DELAY_MS));
+        this.log.info('Handshake OK, bereit für Befehle');
     }
 
     async sendCommand(acFrame) {
-        const packet = this._wrap(acFrame);
+        const packet = this._wrapRequest(acFrame);
         this.log.debug('CMD senden (' + packet.length + 'B): ' + packet.toString('hex'));
         this.socket.write(packet);
-        const result = await this._waitFor('Antwort Timeout');
+        const result = await this._waitPacket('Antwort Timeout nach Befehl');
         return result.plain;
     }
 
     disconnect() {
         if (this._pending) { clearTimeout(this._pending.timer); this._pending = null; }
         if (this.socket)   { this.socket.destroy(); this.socket = null; }
-        this.tcpKey = null; this.rxBuf = Buffer.alloc(0);
+        this.tcpKey = null;
+        this.rxBuf  = Buffer.alloc(0);
     }
 }
 
+// ─── AC Status parsen ────────────────────────────────────────────────────────
 function parseACStatus(payload) {
+    // 0xAA-Startbyte suchen
     let off = -1;
-    for (let i = 0; i < payload.length; i++) { if (payload[i] === 0xAA) { off = i; break; } }
+    for (let i = 0; i < payload.length; i++) {
+        if (payload[i] === 0xAA) { off = i; break; }
+    }
     if (off < 0) return null;
     const p = payload.slice(off);
     if (p.length < 25) return null;
-    const power       = !!(p[9]  & 0x40);
-    const mode        = p[9] & 0x0F;
-    const temperature = (p[10] & 0x1F) + (!!(p[10] & 0x20) ? 0.5 : 0);
-    const fanSpeed    = p[11] & 0x7F;
+
     return {
-        power,
-        mode:             MODES[mode] || ('mode_' + mode),
-        temperature,
-        fan_speed:        FAN_SPEEDS[fanSpeed] || String(fanSpeed),
+        power:            !!(p[9]  & 0x40),
+        mode:             MODES[p[9] & 0x0F] || ('mode_' + (p[9] & 0x0F)),
+        temperature:      (p[10] & 0x1F) + (!!(p[10] & 0x20) ? 0.5 : 0),
+        fan_speed:        FAN_SPEEDS[p[11] & 0x7F] || String(p[11] & 0x7F),
         swing_vertical:   !!(p[12] & 0xF0),
         swing_horizontal: !!(p[12] & 0x0F),
         eco:              !!(p[13] & 0x80),
@@ -260,6 +319,7 @@ function parseACStatus(payload) {
     };
 }
 
+// ─── Adapter ─────────────────────────────────────────────────────────────────
 class MideaAcAdapter extends utils.Adapter {
     constructor(options) {
         super({ ...options, name: 'midea-ac-lan' });
@@ -333,7 +393,7 @@ class MideaAcAdapter extends utils.Adapter {
         this._polling = true;
         try {
             const plain = await this._withDevice((d) => d.sendCommand(buildACFrame(AC_CMD_STATUS)));
-            if (!plain) { this.log.warn('Leere Antwort'); return; }
+            if (!plain) { this.log.warn('Leere Antwort vom Gerät'); return; }
             this.log.debug('Status-Rohdaten: ' + plain.toString('hex'));
             const st = parseACStatus(plain);
             if (!st) { this.log.warn('Parse fehlgeschlagen. Roh: ' + plain.toString('hex')); return; }
@@ -374,8 +434,8 @@ class MideaAcAdapter extends utils.Adapter {
         if (key === 'turbo')            cur.turbo            = !!state.val;
         if (key === 'sleep')            cur.sleep            = !!state.val;
         const params = {
-            power: cur.power !== undefined ? cur.power : true,
-            mode:  MODES_REV[cur.mode] || 2,
+            power:            cur.power !== undefined ? cur.power : true,
+            mode:             MODES_REV[cur.mode] || 2,
             temperature:      cur.temperature      || 24,
             fan_speed:        FAN_SPEEDS_REV[cur.fan_speed] || 101,
             swing_vertical:   !!cur.swing_vertical,
