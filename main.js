@@ -104,8 +104,7 @@ function buildGetStateFrame() {
         0x02,                   // temperature_type = INDOOR
         0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00,
-        0x03,                   // unknown
+        0x00, 0x00, 0x00, 0x03, // [19] = 0x03 (msmart-ng: data[19])
     ]);
     return buildFrame(FRAME_TYPE_QUERY, payload);
 }
@@ -271,14 +270,11 @@ class MideaV3 {
 
     _wrap8370(acFrame) {
         const enc = this._aesEncrypt(acFrame);
-        const countBuf = Buffer.alloc(2);
-        // msgCount nicht mehr nötig — einfach 0x00 0x00 als Zähler
-        const body = Buffer.concat([countBuf, enc]);
-        const hdr  = Buffer.alloc(8, 0x00);
+        const hdr = Buffer.alloc(8, 0x00);
         MAGIC_8370.copy(hdr, 0);
-        hdr.writeUInt16BE(body.length, 2);
+        hdr.writeUInt16BE(enc.length, 2);
         hdr[4] = MSGTYPE_REQUEST;
-        return Buffer.concat([hdr, body]);
+        return Buffer.concat([hdr, enc]);
     }
 
     _tryConsume() {
