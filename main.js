@@ -28,9 +28,8 @@ const DEVICE_TYPE_AC    = 0xAC;
 const MODES     = { 1: 'auto', 2: 'cool', 3: 'dry', 4: 'heat', 5: 'fan_only' };
 const MODES_REV = { auto: 1, cool: 2, dry: 3, heat: 4, fan_only: 5 };
 
-const CONNECT_TIMEOUT_MS   = 10000;
-const READ_TIMEOUT_MS      = 10000;
-const POST_HANDSHAKE_DELAY = 1000;
+const CONNECT_TIMEOUT_MS = 10000;
+const READ_TIMEOUT_MS    = 10000;
 
 // ─── CRC8 (Midea) ─────────────────────────────────────────────────────────────
 const CRC8_TABLE = [
@@ -96,16 +95,18 @@ function buildFrame(frameType, payload) {
 }
 
 function buildGetStateFrame() {
-    // GetStateCommand.tobytes() aus msmart-ng:
-    // 0x41, 0x81, 0x00, 0xFF, 0x03, 0xFF, 0x00,
-    // temperature_type(0x02=INDOOR), 0x00*12, 0x03
+    // Exakt nach midea-local (rokam) MessageQuery._body für body_type 0x41
     const payload = Buffer.from([
-        0x41,                   // GET_STATE cmd
-        0x81, 0x00, 0xFF, 0x03, 0xFF, 0x00,
-        0x02,                   // temperature_type = INDOOR
-        0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x03, // [19] = 0x03 (msmart-ng: data[19])
+        0x41,                   // body_type
+        0x81,                   // [0]
+        0x00,                   // [1]
+        0xFF,                   // [2]
+        0x00, 0x00, 0x00,       // [3..5]
+        0x00, 0x00, 0x00,       // [6..8]
+        0x00, 0x00, 0x00,       // [9..11]
+        0x00, 0x00, 0x00,       // [12..14]
+        0x00, 0x00, 0x00,       // [15..17]
+        0x00,                   // [18]
     ]);
     return buildFrame(FRAME_TYPE_QUERY, payload);
 }
@@ -417,9 +418,6 @@ class MideaV3 {
         const hsResult = await this._waitPacket('Handshake Timeout — prüfe IP, Port und Token');
         this._deriveKey(hsResult.raw);
         this.log.info('Handshake OK');
-
-        // Pflicht-Pause nach Handshake
-        await new Promise((r) => setTimeout(r, POST_HANDSHAKE_DELAY));
     }
 
     async sendCommand(acFrame) {
