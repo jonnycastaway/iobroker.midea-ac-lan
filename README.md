@@ -12,14 +12,14 @@ Kompatibel mit Midea, Rotenso, Comfee, Inventor EVO und anderen OEM-Marken.
 ```bash
 # Im ioBroker-Verzeichnis:
 cd /opt/iobroker
-npm install /pfad/zu/iobroker.midea-ac
+npm install /pfad/zu/iobroker.midea-ac-lan
 iobroker add midea-ac
 ```
 
 ### Über GitHub (wenn hochgeladen)
 
 Im Admin-Adapter: **Adapter → Eigenes → von URL installieren**  
-URL: `https://github.com/DEIN_USER/iobroker.midea-ac/tarball/main`
+URL: `https://github.com/DEIN_USER/iobroker.midea-ac-lan/tarball/main`
 
 ---
 

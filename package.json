@@ -1,5 +1,5 @@
 {
-  "name": "iobroker.midea-ac",
+  "name": "iobroker.midea-ac-lan",
   "version": "0.1.0",
   "description": "ioBroker adapter for Midea M-Smart AC units via local LAN (Protocol V3)",
   "author": "Your Name <you@example.com>",

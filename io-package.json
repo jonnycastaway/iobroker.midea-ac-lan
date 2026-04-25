@@ -1,6 +1,6 @@
 {
   "common": {
-    "name": "midea-ac",
+    "name": "midea-ac-lan",
     "version": "0.1.0",
     "news": {
       "0.1.0": {

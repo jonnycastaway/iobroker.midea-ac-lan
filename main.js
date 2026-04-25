@@ -309,7 +309,7 @@ function parseACStatus(payload) {
 // ─────────────────────────────────────────────
 class MideaAcAdapter extends utils.Adapter {
     constructor(options) {
-        super({ ...options, name: 'midea-ac' });
+        super({ ...options, name: 'midea-ac-lan' });
         this._pollTimer = null;
         this._lastState = {};
         this.on('ready',       this.onReady.bind(this));
