@@ -1,0 +1,42 @@
+{
+  "common": {
+    "name": "midea-ac-lan",
+    "version": "2.0.0",
+    "title": "Midea AC LAN",
+    "titleLang": {
+      "en": "Midea AC LAN",
+      "de": "Midea AC LAN"
+    },
+    "desc": {
+      "en": "Midea AC Local Network Controller",
+      "de": "Midea AC LAN-Controller"
+    },
+    "authors": [
+      "Midea AC LAN"
+    ],
+    "license": "MIT",
+    "platform": "Javascript/Node.js",
+    "main": "main.js",
+    "enabled": true,
+    "loglevel": "info",
+    "mode": "daemon",
+    "type": "climate",
+    "connectionType": "lan",
+    "dataSource": "push",
+    "adminUI": {
+      "config": "json"
+    }
+  },
+  "native": {
+    "ip_address": "",
+    "device_id": "",
+    "token": "",
+    "key": "",
+    "cloud_username": "",
+    "cloud_password": "",
+    "use_cloud_auth": false,
+    "poll_interval": 60
+  },
+  "objects": [],
+  "instanceObjects": []
+}

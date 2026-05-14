@@ -1,0 +1,23 @@
+{
+  "name": "iobroker.midea-ac-lan",
+  "version": "2.0.0",
+  "description": "Midea AC Local Network Controller",
+  "author": {
+    "name": "Midea AC LAN"
+  },
+  "homepage": "https://github.com/example/iobroker.midea-ac-lan",
+  "license": "MIT",
+  "keywords": [
+    "iobroker",
+    "midea",
+    "air conditioning",
+    "ac",
+    "smart home"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/example/iobroker.midea-ac-lan"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
