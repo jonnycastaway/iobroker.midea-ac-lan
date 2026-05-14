@@ -385,8 +385,13 @@ class MideaAcAdapter extends utils.Adapter {
             return;
         }
 
+        this.log.info('Config: IP=' + this.config.ip_address + ', Device ID=' + this.config.device_id);
+
         const hasTokenAndKey = this.config.token && this.config.key;
+        this.log.info('Has token/key: ' + hasTokenAndKey + ', use_cloud_auth: ' + this.config.use_cloud_auth);
+
         if (!hasTokenAndKey && this.config.use_cloud_auth) {
+            this.log.info('Fetching token from cloud...');
             const success = await this._fetchTokenFromCloud();
             if (!success) { this.log.error('Cloud auth failed'); return; }
             this.log.info('Cloud auth successful');
@@ -403,13 +408,19 @@ class MideaAcAdapter extends utils.Adapter {
             parseInt(this.config.device_id)
         );
 
+        this.log.info('Connecting to ' + this.config.ip_address + '...');
         const connected = await this._client.connect();
+        this.log.info('Connected: ' + connected);
         if (!connected) { this.log.error('Connection failed'); return; }
 
+        this.log.info('Authenticating...');
         const authenticated = await this._client.authenticate();
+        this.log.info('Authenticated: ' + authenticated);
         if (!authenticated) { this.log.error('Authentication failed'); this._client.disconnect(); return; }
 
+        this.log.info('Fetching status...');
         const status = await this._client.getStatus();
+        this.log.info('Status received: ' + (status ? status.length + ' bytes' : 'null'));
         if (!status) { this.log.error('Failed to get status'); return; }
 
         const parsed = parseACStatus(status);
