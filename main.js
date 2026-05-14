@@ -383,6 +383,7 @@ class MideaAcAdapter extends utils.Adapter {
         this.on('ready', this._onReady.bind(this));
         this.on('stateChange', this._onStateChange.bind(this));
         this.on('unload', this._onUnload.bind(this));
+        this.log.info('MideaAcAdapter constructor called');
     }
 
     async _ensureConnected() {
@@ -444,6 +445,7 @@ class MideaAcAdapter extends utils.Adapter {
         const parsed = parseACStatus(status);
         this.log.info('AC Status: Power=' + parsed.power + ', Mode=' + parsed.mode + ', Temp=' + parsed.targetTemp);
         this._updateStates(parsed);
+        this.subscribeStates('ac.states.*');
 
         this._pollInterval = setInterval(async () => {
             try {
@@ -495,6 +497,7 @@ _createStates() {
     }
 
     async _onStateChange(id, state) {
+        this.log.info('StateChange event: id=' + id + ', state=' + JSON.stringify(state));
         if (!state || state.ack) return;
         if (!this._client) { this.log.warn('Client not initialized'); return; }
 
