@@ -3,135 +3,25 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Midea AC LAN - Configuration</title>
-    <script src="../../lib/js/jquery.min.js"></script>
-    <script src="../../lib/js/admin.js"></script>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            padding: 20px;
-            background: #f5f5f5;
-        }
-        .card {
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-        h2 {
-            margin-top: 0;
-            color: #333;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 10px;
-        }
-        .form-group {
-            margin-bottom: 15px;
-        }
-        label {
-            display: block;
-            font-weight: 600;
-            margin-bottom: 5px;
-            color: #555;
-        }
-        input[type="text"],
-        input[type="password"],
-        input[type="number"] {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 14px;
-            box-sizing: border-box;
-        }
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .checkbox-group input[type="checkbox"] {
-            width: 20px;
-            height: 20px;
-        }
-        .help-text {
-            font-size: 12px;
-            color: #888;
-            margin-top: 3px;
-        }
-        .section-title {
-            font-size: 14px;
-            font-weight: 600;
-            color: #666;
-            margin: 20px 0 10px 0;
-            padding: 5px 10px;
-            background: #f9f9f9;
-            border-left: 3px solid #0073aa;
-        }
-        .btn {
-            background: #0073aa;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            margin-right: 10px;
-        }
-        .btn:hover {
-            background: #005580;
-        }
-        .btn-secondary {
-            background: #6c757d;
-        }
-        .btn-secondary:hover {
-            background: #545b62;
-        }
-        #status {
-            padding: 10px;
-            border-radius: 4px;
-            margin-top: 15px;
-            display: none;
-        }
-        #status.success {
-            background: #d4edda;
-            color: #155724;
-        }
-        #status.error {
-            background: #f8d7da;
-            color: #721c24;
-        }
-        #status.info {
-            background: #d1ecf1;
-            color: #0c5460;
-        }
-    </style>
+    <title>Midea AC LAN</title>
 </head>
 <body>
-    <div class="card">
-        <h2>Midea AC LAN - Configuration</h2>
-
-        <div class="section-title">Connection Settings</div>
-
+    <div id="root">
         <div class="form-group">
             <label for="ip_address">AC IP Address *</label>
             <input type="text" id="ip_address" placeholder="0.0.0.0">
-            <div class="help-text">The IP address of your Midea AC on the local network</div>
         </div>
 
         <div class="form-group">
             <label for="device_id">Device ID *</label>
             <input type="text" id="device_id" placeholder="0123456789012345">
-            <div class="help-text">The device ID of your AC</div>
         </div>
 
-        <div class="section-title">Cloud Authentication (Optional)</div>
-
-        <div class="form-group checkbox-group">
-            <input type="checkbox" id="use_cloud_auth">
-            <label for="use_cloud_auth" style="margin: 0;">Use Cloud Authentication</label>
-        </div>
-        <div class="help-text" style="margin-left: 30px; margin-bottom: 15px;">
-            Enable this if you don't have token/key from config file
+        <div class="form-group">
+            <label for="use_cloud_auth">
+                <input type="checkbox" id="use_cloud_auth">
+                Use Cloud Authentication
+            </label>
         </div>
 
         <div id="cloud_credentials" style="display: none;">
@@ -146,8 +36,6 @@
             </div>
         </div>
 
-        <div class="section-title">Token & Key (from config file)</div>
-
         <div class="form-group">
             <label for="token">Token (64 characters)</label>
             <input type="text" id="token" placeholder="64 character hex string">
@@ -158,45 +46,15 @@
             <input type="text" id="key" placeholder="64 character hex string">
         </div>
 
-        <div class="section-title">Polling Settings</div>
-
         <div class="form-group">
             <label for="poll_interval">Poll Interval (seconds)</label>
             <input type="number" id="poll_interval" value="60" min="10" max="3600">
-            <div class="help-text">How often to poll the AC for status updates (10-3600 seconds)</div>
         </div>
-
-        <div style="margin-top: 20px;">
-            <button class="btn" id="saveBtn">Save Configuration</button>
-            <button class="btn btn-secondary" id="testBtn">Test Connection</button>
-        </div>
-
-        <div id="status"></div>
     </div>
 
     <script>
-        function showStatus(message, type) {
-            const status = document.getElementById('status');
-            status.textContent = message;
-            status.className = type;
-            status.style.display = 'block';
-        }
-
-        function loadSettings() {
-            const settings = {
-                ip_address: '',
-                device_id: '',
-                token: '',
-                key: '',
-                cloud_username: '',
-                cloud_password: '',
-                use_cloud_auth: false,
-                poll_interval: 60
-            };
-
-            const config = systemAdapter.native || {};
-
-            Object.assign(settings, config);
+        function load(_callback) {
+            const settings = systemAdapter.native || {};
 
             document.getElementById('ip_address').value = settings.ip_address || '';
             document.getElementById('device_id').value = settings.device_id || '';
@@ -208,6 +66,7 @@
             document.getElementById('poll_interval').value = settings.poll_interval || 60;
 
             updateCloudVisibility();
+            if (_callback) _callback();
         }
 
         function updateCloudVisibility() {
@@ -215,7 +74,7 @@
             document.getElementById('cloud_credentials').style.display = useCloud ? 'block' : 'none';
         }
 
-        function saveSettings() {
+        function save(callback) {
             const obj = {
                 native: {
                     ip_address: document.getElementById('ip_address').value.trim(),
@@ -230,44 +89,16 @@
             };
 
             sendTo('system.adapter.midea-ac-lan', 'save', obj, (result) => {
-                if (result.error) {
-                    showStatus('Error saving: ' + result.error, 'error');
-                } else {
-                    showStatus('Configuration saved!', 'success');
-                }
+                if (callback) callback(result);
             });
         }
 
-        function testConnection() {
-            if (!document.getElementById('ip_address').value.trim() || !document.getElementById('device_id').value.trim()) {
-                showStatus('IP address and Device ID are required!', 'error');
-                return;
-            }
-
-            showStatus('Testing connection...', 'info');
-
-            const settings = {
-                ip_address: document.getElementById('ip_address').value.trim(),
-                device_id: document.getElementById('device_id').value.trim(),
-                token: document.getElementById('token').value.trim(),
-                key: document.getElementById('key').value.trim()
-            };
-
-            sendTo('midea-ac-lan.0', 'testConnection', settings, (response) => {
-                if (response && response.success) {
-                    showStatus('Connection successful!', 'success');
-                } else {
-                    showStatus('Connection failed: ' + (response ? response.error : 'Unknown error'), 'error');
-                }
-            });
+        function showError(error) {
+            console.error(error);
         }
 
         document.addEventListener('DOMContentLoaded', function() {
-            loadSettings();
-
             document.getElementById('use_cloud_auth').addEventListener('change', updateCloudVisibility);
-            document.getElementById('saveBtn').addEventListener('click', saveSettings);
-            document.getElementById('testBtn').addEventListener('click', testConnection);
         });
     </script>
 </body>
