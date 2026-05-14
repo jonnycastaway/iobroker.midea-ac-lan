@@ -4,6 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Midea AC LAN - Configuration</title>
+    <script src="../../lib/js/jquery.min.js"></script>
+    <script src="../../lib/js/admin.js"></script>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
@@ -41,10 +43,6 @@
             border-radius: 4px;
             font-size: 14px;
             box-sizing: border-box;
-        }
-        input:disabled {
-            background: #f0f0f0;
-            color: #999;
         }
         .checkbox-group {
             display: flex;
@@ -92,6 +90,7 @@
             padding: 10px;
             border-radius: 4px;
             margin-top: 15px;
+            display: none;
         }
         #status.success {
             background: #d4edda;
@@ -122,7 +121,7 @@
         <div class="form-group">
             <label for="device_id">Device ID *</label>
             <input type="text" id="device_id" placeholder="0123456789012345">
-            <div class="help-text">The device ID of your AC (found in midea-app or ioBroker config)</div>
+            <div class="help-text">The device ID of your AC</div>
         </div>
 
         <div class="section-title">Cloud Authentication (Optional)</div>
@@ -132,7 +131,7 @@
             <label for="use_cloud_auth" style="margin: 0;">Use Cloud Authentication</label>
         </div>
         <div class="help-text" style="margin-left: 30px; margin-bottom: 15px;">
-            Enable this if you don't have token/key from config file, or want to update them
+            Enable this if you don't have token/key from config file
         </div>
 
         <div id="cloud_credentials" style="display: none;">
@@ -176,8 +175,6 @@
     </div>
 
     <script>
-        const systemConfig = typeof systemConfig !== 'undefined' ? systemConfig : {};
-
         function showStatus(message, type) {
             const status = document.getElementById('status');
             status.textContent = message;
@@ -197,12 +194,9 @@
                 poll_interval: 60
             };
 
-            const native = typeof connection !== 'undefined' && connection ? connection : {};
-            const config = typeof data !== 'undefined' ? data : {};
+            const config = systemAdapter.native || {};
 
-            if (config.native) {
-                Object.assign(settings, config.native);
-            }
+            Object.assign(settings, config);
 
             document.getElementById('ip_address').value = settings.ip_address || '';
             document.getElementById('device_id').value = settings.device_id || '';
@@ -222,7 +216,7 @@
         }
 
         function saveSettings() {
-            const settings = {
+            const obj = {
                 native: {
                     ip_address: document.getElementById('ip_address').value.trim(),
                     device_id: document.getElementById('device_id').value.trim(),
@@ -235,55 +229,37 @@
                 }
             };
 
-            if (typeof sendTo !== 'undefined') {
-                sendTo({
-                    command: 'save',
-                    message: settings
-                });
-                showStatus('Configuration saved!', 'success');
-            } else if (typeof socket !== 'undefined') {
-                socket.emit('setObject', 'system.adapter.midea-ac-lan', settings, (err) => {
-                    if (err) {
-                        showStatus('Error saving: ' + err, 'error');
-                    } else {
-                        showStatus('Configuration saved!', 'success');
-                    }
-                });
-            }
+            sendTo('system.adapter.midea-ac-lan', 'save', obj, (result) => {
+                if (result.error) {
+                    showStatus('Error saving: ' + result.error, 'error');
+                } else {
+                    showStatus('Configuration saved!', 'success');
+                }
+            });
         }
 
         function testConnection() {
-            const settings = {
-                ip_address: document.getElementById('ip_address').value.trim(),
-                device_id: document.getElementById('device_id').value.trim(),
-                token: document.getElementById('token').value.trim(),
-                key: document.getElementById('key').value.trim(),
-                cloud_username: document.getElementById('cloud_username').value.trim(),
-                cloud_password: document.getElementById('cloud_password').value,
-                use_cloud_auth: document.getElementById('use_cloud_auth').checked
-            };
-
-            if (!settings.ip_address || !settings.device_id) {
+            if (!document.getElementById('ip_address').value.trim() || !document.getElementById('device_id').value.trim()) {
                 showStatus('IP address and Device ID are required!', 'error');
                 return;
             }
 
             showStatus('Testing connection...', 'info');
 
-            if (typeof sendTo !== 'undefined') {
-                sendTo({
-                    command: 'testConnection',
-                    message: settings
-                });
-            } else if (typeof socket !== 'undefined') {
-                socket.emit('sendTo', 'midea-ac-lan.0', 'testConnection', settings, (response) => {
-                    if (response && response.success) {
-                        showStatus('Connection successful! AC is responding.', 'success');
-                    } else {
-                        showStatus('Connection failed: ' + (response ? response.error : 'Unknown error'), 'error');
-                    }
-                });
-            }
+            const settings = {
+                ip_address: document.getElementById('ip_address').value.trim(),
+                device_id: document.getElementById('device_id').value.trim(),
+                token: document.getElementById('token').value.trim(),
+                key: document.getElementById('key').value.trim()
+            };
+
+            sendTo('midea-ac-lan.0', 'testConnection', settings, (response) => {
+                if (response && response.success) {
+                    showStatus('Connection successful!', 'success');
+                } else {
+                    showStatus('Connection failed: ' + (response ? response.error : 'Unknown error'), 'error');
+                }
+            });
         }
 
         document.addEventListener('DOMContentLoaded', function() {
