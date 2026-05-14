@@ -364,14 +364,25 @@ class MideaACClient {
 function parseACStatus(data) {
     if (!data || data.length < 40) return null;
     const body = data.slice(10);
+    const modeNum = (body[2] >> 5) & 0x07;
+    const modeNames = ['Auto', 'Cool', 'Dry', 'Fan', 'Heat', 'X6', 'X7', 'X8'];
+    const tempRaw = body[12];
+    let outdoorTemp = null;
+    if (tempRaw && tempRaw !== 255) {
+        const tempVal = (tempRaw - 50) / 2;
+        const decimal = body[15];
+        outdoorTemp = tempVal < 0 ? Math.floor(tempVal) - ((decimal >> 4) & 0x0F) * 0.1 : Math.floor(tempVal) + ((decimal >> 4) & 0x0F) * 0.1;
+    }
     return {
         power: (body[1] & 0x01) > 0,
-        mode: (body[2] >> 5) & 0x07,
+        mode: modeNum,
+        modeText: modeNames[modeNum] || 'Unknown',
         targetTemp: (body[2] & 0x0F) + 16 + (((body[2] >> 4) & 0x01) ? 0.5 : 0),
         fanSpeed: body[3] & 0x7F,
         swingVertical: (body[7] & 0x0C) > 0,
         swingHorizontal: (body[7] & 0x03) > 0,
-        indoorTemp: ((body[11] - 50) / 2) + ((body[15] & 0x0F) * 0.1)
+        indoorTemp: ((body[11] - 50) / 2) + ((body[15] & 0x0F) * 0.1),
+        outdoorTemp: outdoorTemp
     };
 }
 
@@ -470,16 +481,18 @@ _createStates() {
 
         const states = [
             { id: 'power', name: 'Power', type: 'boolean', role: 'switch' },
-            { id: 'mode', name: 'Mode', type: 'number', role: 'value' },
+            { id: 'mode', name: 'Mode', type: 'number', role: 'value', write: true },
+            { id: 'mode_text', name: 'Mode Text', type: 'string', role: 'text', write: false },
             { id: 'target_temperature', name: 'Target Temperature', type: 'number', role: 'value.temperature' },
             { id: 'fan_speed', name: 'Fan Speed', type: 'number', role: 'value' },
             { id: 'swing_vertical', name: 'Vertical Swing', type: 'boolean', role: 'switch' },
             { id: 'swing_horizontal', name: 'Horizontal Swing', type: 'boolean', role: 'switch' },
-            { id: 'indoor_temperature', name: 'Indoor Temperature', type: 'number', role: 'value.temperature' }
+            { id: 'indoor_temperature', name: 'Indoor Temperature', type: 'number', role: 'value.temperature' },
+            { id: 'outdoor_temperature', name: 'Outdoor Temperature', type: 'number', role: 'value.temperature' }
         ];
         states.forEach(s => {
             this.setObjectNotExistsAsync('ac.states.' + s.id, {
-                type: 'state', common: { name: s.name, type: s.type, role: s.role, write: true, read: true }, native: {}
+                type: 'state', common: { name: s.name, type: s.type, role: s.role, write: s.write !== false, read: true }, native: {}
             });
         });
     }
@@ -488,11 +501,15 @@ _createStates() {
         if (!status) return;
         this.setStateAsync('ac.states.power', { val: status.power, ack: true });
         this.setStateAsync('ac.states.mode', { val: status.mode, ack: true });
+        this.setStateAsync('ac.states.mode_text', { val: status.modeText || '', ack: true });
         this.setStateAsync('ac.states.target_temperature', { val: status.targetTemp, ack: true });
         this.setStateAsync('ac.states.fan_speed', { val: status.fanSpeed, ack: true });
         this.setStateAsync('ac.states.swing_vertical', { val: status.swingVertical, ack: true });
         this.setStateAsync('ac.states.swing_horizontal', { val: status.swingHorizontal, ack: true });
         this.setStateAsync('ac.states.indoor_temperature', { val: status.indoorTemp, ack: true });
+        if (status.outdoorTemp !== null) {
+            this.setStateAsync('ac.states.outdoor_temperature', { val: status.outdoorTemp, ack: true });
+        }
     }
 
     async _onStateChange(id, state) {
