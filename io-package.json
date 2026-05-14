@@ -27,6 +27,9 @@
       "config": "json"
     }
   },
+  "admin": {
+    "jsonConfig": "admin/jsonConfig.json"
+  },
   "native": {
     "ip_address": "",
     "device_id": "",

@@ -1,0 +1,96 @@
+{
+  "type": "panel",
+  "items": {
+    "_headerConnection": {
+      "type": "header",
+      "text": "Connection Settings",
+      "sm": 12
+    },
+    "ip_address": {
+      "type": "text",
+      "label": "AC IP Address",
+      "placeholder": "0.0.0.0",
+      "sm": 12,
+      "md": 6,
+      "validator": "^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$",
+      "validatorErrorText": "Please enter a valid IP address"
+    },
+    "device_id": {
+      "type": "text",
+      "label": "Device ID",
+      "placeholder": "0123456789012345",
+      "sm": 12,
+      "md": 6
+    },
+    "_divider1": {
+      "type": "divider",
+      "sm": 12
+    },
+    "_headerCloud": {
+      "type": "header",
+      "text": "Cloud Authentication (Optional)",
+      "sm": 12
+    },
+    "use_cloud_auth": {
+      "type": "checkbox",
+      "label": "Use Cloud Authentication",
+      "sm": 12,
+      "md": 6
+    },
+    "cloud_username": {
+      "type": "text",
+      "label": "Cloud Username / Email",
+      "placeholder": "user@example.com",
+      "sm": 12,
+      "md": 6
+    },
+    "cloud_password": {
+      "type": "password",
+      "label": "Cloud Password",
+      "placeholder": "password",
+      "sm": 12,
+      "md": 6
+    },
+    "_divider2": {
+      "type": "divider",
+      "sm": 12
+    },
+    "_headerToken": {
+      "type": "header",
+      "text": "Token & Key (from config file)",
+      "sm": 12
+    },
+    "token": {
+      "type": "text",
+      "label": "Token (64 characters)",
+      "placeholder": "64 character hex string",
+      "sm": 12,
+      "md": 6
+    },
+    "key": {
+      "type": "text",
+      "label": "Key (64 characters)",
+      "placeholder": "64 character hex string",
+      "sm": 12,
+      "md": 6
+    },
+    "_divider3": {
+      "type": "divider",
+      "sm": 12
+    },
+    "_headerPolling": {
+      "type": "header",
+      "text": "Polling Settings",
+      "sm": 12
+    },
+    "poll_interval": {
+      "type": "number",
+      "label": "Poll Interval (seconds)",
+      "min": 10,
+      "max": 3600,
+      "def": 60,
+      "sm": 12,
+      "md": 6
+    }
+  }
+}
