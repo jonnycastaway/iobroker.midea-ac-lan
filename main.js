@@ -487,33 +487,44 @@ class MideaAcAdapter extends utils.Adapter {
 
     async _onStateChange(id, state) {
         if (!state || state.ack) return;
-        if (!this._client) return;
+        if (!this._client) { this.log.warn('Client not initialized'); return; }
 
         const stateName = id.replace(this.namespace + '.ac.', '');
+        this.log.info('State change: ' + stateName + ' = ' + state.val);
         let current;
         try {
+            const connected = await this._ensureConnected();
+            if (!connected) { this.log.warn('Not connected'); return; }
             const s = await this._client.getStatus();
             if (s) current = parseACStatus(s);
-        } catch (e) { this.log.warn('Cannot get current status'); return; }
-        if (!current) return;
+        } catch (e) { this.log.error('Cannot get current status: ' + e.message); return; }
+        if (!current) { this.log.warn('No current status'); return; }
+
+        this.log.info('Current status: Power=' + current.power + ', Mode=' + current.mode + ', Temp=' + current.targetTemp + ', Fan=' + current.fanSpeed);
 
         switch (stateName) {
             case 'power':
+                this.log.info('Setting power to ' + state.val);
                 await this._client.sendSetCommand(state.val, current.mode, current.targetTemp, current.fanSpeed, current.swingVertical, current.swingHorizontal);
                 break;
             case 'mode':
+                this.log.info('Setting mode to ' + state.val);
                 await this._client.sendSetCommand(current.power, state.val, current.targetTemp, current.fanSpeed, current.swingVertical, current.swingHorizontal);
                 break;
             case 'target_temperature':
+                this.log.info('Setting temp to ' + state.val);
                 await this._client.sendSetCommand(current.power, current.mode, state.val, current.fanSpeed, current.swingVertical, current.swingHorizontal);
                 break;
             case 'fan_speed':
+                this.log.info('Setting fan to ' + state.val);
                 await this._client.sendSetCommand(current.power, current.mode, current.targetTemp, state.val, current.swingVertical, current.swingHorizontal);
                 break;
             case 'swing_vertical':
+                this.log.info('Setting swingV to ' + state.val);
                 await this._client.sendSetCommand(current.power, current.mode, current.targetTemp, current.fanSpeed, state.val, current.swingHorizontal);
                 break;
             case 'swing_horizontal':
+                this.log.info('Setting swingH to ' + state.val);
                 await this._client.sendSetCommand(current.power, current.mode, current.targetTemp, current.fanSpeed, current.swingVertical, state.val);
                 break;
         }
