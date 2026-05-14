@@ -316,6 +316,12 @@ class MideaACClient {
             body[1] = modeByte | targetTemp;
             body[2] = fan;
             body[6] = swing;
+            body[7] = 0;
+            body[8] = 0;
+            body[9] = 0;
+            body[16] = 0;
+            body[20] = 0;
+            body[21] = 0;
 
             const bodyType = 0x40;
             const bodyData = Buffer.concat([Buffer.from([bodyType]), body, Buffer.from([this._requestCount])]);
@@ -457,7 +463,10 @@ class MideaAcAdapter extends utils.Adapter {
         callback();
     }
 
-    _createStates() {
+_createStates() {
+        this.setObjectNotExistsAsync('ac', { type: 'device', common: { name: 'Midea AC' }, native: {} });
+        this.setObjectNotExistsAsync('ac.states', { type: 'channel', common: { name: 'States' }, native: {} });
+
         const states = [
             { id: 'power', name: 'Power', type: 'boolean', role: 'switch' },
             { id: 'mode', name: 'Mode', type: 'number', role: 'value' },
@@ -468,7 +477,7 @@ class MideaAcAdapter extends utils.Adapter {
             { id: 'indoor_temperature', name: 'Indoor Temperature', type: 'number', role: 'value.temperature' }
         ];
         states.forEach(s => {
-            this.setObjectNotExistsAsync('ac.' + s.id, {
+            this.setObjectNotExistsAsync('ac.states.' + s.id, {
                 type: 'state', common: { name: s.name, type: s.type, role: s.role, write: true, read: true }, native: {}
             });
         });
@@ -476,20 +485,20 @@ class MideaAcAdapter extends utils.Adapter {
 
     _updateStates(status) {
         if (!status) return;
-        this.setStateAsync('ac.power', { val: status.power, ack: true });
-        this.setStateAsync('ac.mode', { val: status.mode, ack: true });
-        this.setStateAsync('ac.target_temperature', { val: status.targetTemp, ack: true });
-        this.setStateAsync('ac.fan_speed', { val: status.fanSpeed, ack: true });
-        this.setStateAsync('ac.swing_vertical', { val: status.swingVertical, ack: true });
-        this.setStateAsync('ac.swing_horizontal', { val: status.swingHorizontal, ack: true });
-        this.setStateAsync('ac.indoor_temperature', { val: status.indoorTemp, ack: true });
+        this.setStateAsync('ac.states.power', { val: status.power, ack: true });
+        this.setStateAsync('ac.states.mode', { val: status.mode, ack: true });
+        this.setStateAsync('ac.states.target_temperature', { val: status.targetTemp, ack: true });
+        this.setStateAsync('ac.states.fan_speed', { val: status.fanSpeed, ack: true });
+        this.setStateAsync('ac.states.swing_vertical', { val: status.swingVertical, ack: true });
+        this.setStateAsync('ac.states.swing_horizontal', { val: status.swingHorizontal, ack: true });
+        this.setStateAsync('ac.states.indoor_temperature', { val: status.indoorTemp, ack: true });
     }
 
     async _onStateChange(id, state) {
         if (!state || state.ack) return;
         if (!this._client) { this.log.warn('Client not initialized'); return; }
 
-        const stateName = id.replace(this.namespace + '.ac.', '');
+        const stateName = id.replace(this.namespace + '.ac.states.', '');
         this.log.info('State change: ' + stateName + ' = ' + state.val);
         let current;
         try {
