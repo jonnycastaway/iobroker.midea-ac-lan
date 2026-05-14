@@ -104,8 +104,9 @@ class MideaACClient {
 
     disconnect() {
         if (this._socket) {
-            this._socket.destroy();
+            try { this._socket.destroy(); } catch (e) { }
             this._socket = null;
+            this._tcpKey = null;
         }
     }
 
@@ -146,7 +147,7 @@ class MideaACClient {
             }, 10000);
 
             this._socket.on('data', dataHandler);
-            this._socket.on('close', () => { if (this._socket) { this._socket.destroy(); this._socket = null; } });
+            this._socket.on('close', () => { });
             this._socket.on('error', () => {});
             this._socket.write(handshakeData);
         });
@@ -268,22 +269,16 @@ class MideaACClient {
             let buffer = Buffer.alloc(0);
             const dataHandler = (chunk) => {
                 buffer = Buffer.concat([buffer, chunk]);
-                console.log('[MideaAC] Received ' + buffer.length + ' bytes, waiting for more...');
                 if (buffer.length >= 6) {
                     const msgType = buffer[5] & 0x0F;
-                    console.log('[MideaAC] MsgType: 0x' + msgType.toString(16));
                     if (msgType === 0x0F) { this._socket.removeListener('data', dataHandler); resolve(null); return; }
                     if (msgType === 0x03) {
-                        console.log('[MideaAC] Got 0x03 response, buffer length: ' + buffer.length);
                         this._socket.removeListener('data', dataHandler);
                         clearTimeout(timeout);
                         const packet5a5a = this.decode8370(buffer);
-                        console.log('[MideaAC] Decoded 5A5A packet length: ' + (packet5a5a ? packet5a5a.length : 'null'));
                         if (packet5a5a && packet5a5a.length >= 104) {
                             const encryptedData = packet5a5a.slice(40, 104);
-                            console.log('[MideaAC] Encrypted data (40-104): ' + encryptedData.toString('hex'));
                             const decrypted = aesEcbDecrypt(encryptedData, DEFAULT_KEY);
-                            console.log('[MideaAC] Decrypted AC status (' + decrypted.length + ' bytes): ' + decrypted.toString('hex'));
                             resolve(decrypted);
                             return;
                         }
@@ -384,6 +379,26 @@ class MideaAcAdapter extends utils.Adapter {
         this.on('unload', this._onUnload.bind(this));
     }
 
+    async _ensureConnected() {
+        if (this._client && this._client._socket && this._client._socket.writable) {
+            return true;
+        }
+        if (this._client) {
+            try { this._client.disconnect(); } catch (e) { }
+        }
+        this._client = new MideaACClient(
+            this.config.ip_address, PORT_TCP,
+            this.config.token, this.config.key,
+            parseInt(this.config.device_id)
+        );
+        const connected = await this._client.connect();
+        if (!connected) { this.log.error('Connection failed'); return false; }
+        const authenticated = await this._client.authenticate();
+        if (!authenticated) { this.log.error('Authentication failed'); return false; }
+        this.log.info('Reconnected successfully');
+        return true;
+    }
+
     async _onReady() {
         this.log.info('Midea AC LAN adapter starting...');
 
@@ -392,11 +407,7 @@ class MideaAcAdapter extends utils.Adapter {
             return;
         }
 
-        this.log.info('Config: IP=' + this.config.ip_address + ', Device ID=' + this.config.device_id);
-
         const hasTokenAndKey = this.config.token && this.config.key;
-        this.log.info('Has token/key: ' + hasTokenAndKey + ', use_cloud_auth: ' + this.config.use_cloud_auth);
-
         if (!hasTokenAndKey && this.config.use_cloud_auth) {
             this.log.info('Fetching token from cloud...');
             const success = await this._fetchTokenFromCloud();
@@ -415,58 +426,27 @@ class MideaAcAdapter extends utils.Adapter {
             parseInt(this.config.device_id)
         );
 
-        this.log.info('Connecting to ' + this.config.ip_address + '...');
         const connected = await this._client.connect();
-        this.log.info('Connected: ' + connected);
         if (!connected) { this.log.error('Connection failed'); return; }
 
-        this.log.info('Authenticating...');
         const authenticated = await this._client.authenticate();
-        this.log.info('Authenticated: ' + authenticated);
         if (!authenticated) { this.log.error('Authentication failed'); this._client.disconnect(); return; }
 
-        this.log.info('Fetching status...');
         const status = await this._client.getStatus();
-        this.log.info('Status received: ' + (status ? status.length + ' bytes, hex: ' + status.toString('hex') : 'null'));
         if (!status) { this.log.error('Failed to get status'); return; }
 
         const parsed = parseACStatus(status);
-        this.log.info('AC Status parsed - Power=' + parsed.power + ', Mode=' + parsed.mode + ', Temp=' + parsed.targetTemp + ', Fan=' + parsed.fanSpeed + ', SwingV=' + parsed.swingVertical + ', SwingH=' + parsed.swingHorizontal + ', Indoor=' + parsed.indoorTemp);
+        this.log.info('AC Status: Power=' + parsed.power + ', Mode=' + parsed.mode + ', Temp=' + parsed.targetTemp);
         this._updateStates(parsed);
 
-        async _ensureConnected() {
-        if (this._client && this._client._socket && this._client._socket.writable) {
-            return true;
-        }
-        if (this._client) this._client.disconnect();
-        this._client = new MideaACClient(
-            this.config.ip_address, PORT_TCP,
-            this.config.token, this.config.key,
-            parseInt(this.config.device_id)
-        );
-        const connected = await this._client.connect();
-        if (!connected) { this.log.error('Connection failed'); return false; }
-        const authenticated = await this._client.authenticate();
-        if (!authenticated) { this.log.error('Authentication failed'); return false; }
-        this.log.info('Reconnected successfully');
-        return true;
-    }
-
-    _pollInterval = setInterval(async () => {
-        this.log.info('Poll tick...');
-        try {
-            const connected = await this._ensureConnected();
-            if (!connected) return;
-
-            const s = await this._client.getStatus();
-            if (s) {
-                this._updateStates(parseACStatus(s));
-                this.log.info('Poll update successful');
-            } else {
-                this.log.warn('Poll returned null');
-            }
-        } catch (e) { this.log.error('Poll error: ' + e.message); }
-    }, (this.config.poll_interval || 60) * 1000);
+        this._pollInterval = setInterval(async () => {
+            try {
+                const connected = await this._ensureConnected();
+                if (!connected) return;
+                const s = await this._client.getStatus();
+                if (s) this._updateStates(parseACStatus(s));
+            } catch (e) { this.log.error('Poll error: ' + e.message); }
+        }, (this.config.poll_interval || 60) * 1000);
 
         this.log.info('Adapter started successfully');
     }
