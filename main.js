@@ -268,16 +268,22 @@ class MideaACClient {
             let buffer = Buffer.alloc(0);
             const dataHandler = (chunk) => {
                 buffer = Buffer.concat([buffer, chunk]);
+                console.log('[MideaAC] Received ' + buffer.length + ' bytes, waiting for more...');
                 if (buffer.length >= 6) {
                     const msgType = buffer[5] & 0x0F;
+                    console.log('[MideaAC] MsgType: 0x' + msgType.toString(16));
                     if (msgType === 0x0F) { this._socket.removeListener('data', dataHandler); resolve(null); return; }
                     if (msgType === 0x03) {
+                        console.log('[MideaAC] Got 0x03 response, buffer length: ' + buffer.length);
                         this._socket.removeListener('data', dataHandler);
                         clearTimeout(timeout);
                         const packet5a5a = this.decode8370(buffer);
+                        console.log('[MideaAC] Decoded 5A5A packet length: ' + (packet5a5a ? packet5a5a.length : 'null'));
                         if (packet5a5a && packet5a5a.length >= 104) {
                             const encryptedData = packet5a5a.slice(40, 104);
+                            console.log('[MideaAC] Encrypted data (40-104): ' + encryptedData.toString('hex'));
                             const decrypted = aesEcbDecrypt(encryptedData, DEFAULT_KEY);
+                            console.log('[MideaAC] Decrypted AC status (' + decrypted.length + ' bytes): ' + decrypted.toString('hex'));
                             resolve(decrypted);
                             return;
                         }
@@ -356,14 +362,15 @@ class MideaACClient {
 
 function parseACStatus(data) {
     if (!data || data.length < 40) return null;
+    const body = data.slice(10);
     return {
-        power: (data[1] & 0x01) > 0,
-        mode: (data[2] >> 5) & 0x07,
-        targetTemp: (data[2] & 0x0F) + 16 + (((data[2] >> 4) & 0x01) ? 0.5 : 0),
-        fanSpeed: data[3] & 0x7F,
-        swingVertical: (data[7] & 0x0C) > 0,
-        swingHorizontal: (data[7] & 0x03) > 0,
-        indoorTemp: ((data[15] - 50) / 2) + ((data[25] & 0x0F) * 0.1)
+        power: (body[1] & 0x01) > 0,
+        mode: (body[2] >> 5) & 0x07,
+        targetTemp: (body[2] & 0x0F) + 16 + (((body[2] >> 4) & 0x01) ? 0.5 : 0),
+        fanSpeed: body[3] & 0x7F,
+        swingVertical: (body[7] & 0x0C) > 0,
+        swingHorizontal: (body[7] & 0x03) > 0,
+        indoorTemp: ((body[11] - 50) / 2) + ((body[15] & 0x0F) * 0.1)
     };
 }
 
@@ -420,11 +427,11 @@ class MideaAcAdapter extends utils.Adapter {
 
         this.log.info('Fetching status...');
         const status = await this._client.getStatus();
-        this.log.info('Status received: ' + (status ? status.length + ' bytes' : 'null'));
+        this.log.info('Status received: ' + (status ? status.length + ' bytes, hex: ' + status.toString('hex') : 'null'));
         if (!status) { this.log.error('Failed to get status'); return; }
 
         const parsed = parseACStatus(status);
-        this.log.info('AC Status: Power=' + parsed.power + ', Mode=' + parsed.mode + ', Temp=' + parsed.targetTemp);
+        this.log.info('AC Status parsed - Power=' + parsed.power + ', Mode=' + parsed.mode + ', Temp=' + parsed.targetTemp + ', Fan=' + parsed.fanSpeed + ', SwingV=' + parsed.swingVertical + ', SwingH=' + parsed.swingHorizontal + ', Indoor=' + parsed.indoorTemp);
         this._updateStates(parsed);
 
         this._pollInterval = setInterval(async () => {
