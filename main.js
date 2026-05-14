@@ -383,7 +383,6 @@ class MideaAcAdapter extends utils.Adapter {
         this.on('ready', this._onReady.bind(this));
         this.on('stateChange', this._onStateChange.bind(this));
         this.on('unload', this._onUnload.bind(this));
-        this.log.info('MideaAcAdapter constructor called');
     }
 
     async _ensureConnected() {
@@ -497,8 +496,8 @@ _createStates() {
     }
 
     async _onStateChange(id, state) {
-        this.log.info('StateChange event: id=' + id + ', state=' + JSON.stringify(state));
         if (!state || state.ack) return;
+        this.log.info('StateChange: id=' + id + ', val=' + state.val);
         if (!this._client) { this.log.warn('Client not initialized'); return; }
 
         const stateName = id.replace(this.namespace + '.ac.states.', '');
