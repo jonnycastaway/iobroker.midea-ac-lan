@@ -14,26 +14,14 @@
     "platform": "Javascript/Node.js",
     "mode": "daemon",
     "loglevel": "info",
-    "restartAdapter": "always",
     "license": "MIT",
-    "compact": true,
     "authors": [
       "Midea AC LAN"
     ],
     "keywords": [
       "midea",
       "ac",
-      "air conditioning",
-      "lan",
-      "local"
-    ],
-    "connectionType": "lan",
-    "dataSource": "push",
-    "stateChangeDialog": true,
-    "dependencies": [
-      {
-        "js-controller": ">=3.0.0"
-      }
+      "air conditioning"
     ]
   },
   "native": {
