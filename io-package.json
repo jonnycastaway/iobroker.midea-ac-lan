@@ -15,11 +15,8 @@
     "mode": "daemon",
     "loglevel": "info",
     "restartAdapter": "always",
-    "homepage": "https://github.com/example/iobroker.midea-ac-lan",
-    "materialize": true,
-    "compact": true,
-    "warnIfNoCorrespondingioPackage": true,
     "license": "MIT",
+    "compact": true,
     "authors": [
       "Midea AC LAN"
     ],
@@ -32,7 +29,12 @@
     ],
     "connectionType": "lan",
     "dataSource": "push",
-    "stateChangeDialog": true
+    "stateChangeDialog": true,
+    "dependencies": [
+      {
+        "js-controller": ">=3.0.0"
+      }
+    ]
   },
   "native": {
     "ip_address": "",

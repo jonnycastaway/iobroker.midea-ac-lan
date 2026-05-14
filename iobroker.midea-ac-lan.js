@@ -4,126 +4,9 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const net = require('net');
+const https = require('https');
 
 const adapterName = 'midea-ac-lan';
-
-function getAdapterDir() {
-    return path.join(__dirname);
-}
-
-function loadConfig(adapter) {
-    const configFile = path.join(getAdapterDir(), '..', 'midea_config_' + adapter.config.device_id + '.json');
-
-    if (fs.existsSync(configFile)) {
-        try {
-            const configData = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-            adapter.config.ip_address = configData.ip_address || adapter.config.ip_address;
-            adapter.config.device_id = configData.device_id || adapter.config.device_id;
-            adapter.config.token = configData.token || adapter.config.token;
-            adapter.config.key = configData.key || adapter.config.key;
-            return true;
-        } catch (e) {
-            adapter.log.warn('Failed to load config file: ' + e.message);
-        }
-    }
-    return false;
-}
-
-function saveConfig(adapter) {
-    const configFile = path.join(getAdapterDir(), '..', 'midea_config_' + adapter.config.device_id + '.json');
-    const configData = {
-        ip_address: adapter.config.ip_address,
-        device_id: adapter.config.device_id,
-        token: adapter.config.token,
-        key: adapter.config.key
-    };
-    try {
-        fs.writeFileSync(configFile, JSON.stringify(configData, null, 2));
-        adapter.log.info('Config saved to ' + configFile);
-    } catch (e) {
-        adapter.log.error('Failed to save config file: ' + e.message);
-    }
-}
-
-async function fetchTokenFromCloud(adapter) {
-    const username = adapter.config.cloud_username;
-    const password = adapter.config.cloud_password;
-
-    if (!username || !password) {
-        adapter.log.warn('Cloud credentials not configured');
-        return false;
-    }
-
-    adapter.log.info('Fetching token from cloud...');
-
-    return new Promise((resolve) => {
-        const options = {
-            hostname: 'midea-app.iobroker.uk',
-            port: 443,
-            path: '/api/v1/login/login',
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        };
-
-        const req = httpsRequest(options, async (response) => {
-            let data = '';
-            response.on('data', (chunk) => data += chunk);
-            response.on('end', () => {
-                try {
-                    const result = JSON.parse(data);
-                    if (result.result && result.result.token && result.result.iotKey) {
-                        adapter.config.token = result.result.token;
-                        adapter.config.key = result.result.iotKey;
-                        adapter.log.info('Cloud auth successful');
-                        resolve(true);
-                    } else {
-                        adapter.log.error('Cloud auth failed: ' + JSON.stringify(result));
-                        resolve(false);
-                    }
-                } catch (e) {
-                    adapter.log.error('Cloud auth parse error: ' + e.message);
-                    resolve(false);
-                }
-            });
-        });
-
-        req.on('error', (e) => {
-            adapter.log.error('Cloud auth request failed: ' + e.message);
-            resolve(false);
-        });
-
-        req.write(JSON.stringify({
-            userId: username,
-            password: password
-        }));
-        req.end();
-    });
-}
-
-let httpsRequest;
-try {
-    httpsRequest = require('https').request;
-} catch (e) {
-    httpsRequest = (options, callback) => {
-        const chunks = [];
-        return {
-            on: (event, handler) => {
-                if (event === 'data') {
-                    return { on: () => {} };
-                }
-                if (event === 'end') {
-                    setTimeout(() => callback({ on: () => {} }), 10);
-                }
-                return {};
-            },
-            write: () => {},
-            end: () => {},
-            on: () => {}
-        };
-    };
-}
 
 const PORT_TCP = 6444;
 const HEADER_8370_1ST = 0x83;
@@ -671,8 +554,13 @@ function updateStates(adapter, status) {
     adapter.setStateChanged('ac.indoor_temperature', { val: status.indoorTemp, ack: true });
 }
 
-function startPolling(adapter, client) {
-    let pollingInterval;
+let pollingInterval = null;
+let clientInstance = null;
+
+function startPolling(adapter, client, interval) {
+    if (pollingInterval) {
+        clearInterval(pollingInterval);
+    }
 
     async function poll() {
         try {
@@ -686,13 +574,17 @@ function startPolling(adapter, client) {
         }
     }
 
-    pollingInterval = setInterval(poll, (adapter.config.poll_interval || 60) * 1000);
+    pollingInterval = setInterval(poll, interval * 1000);
 
     adapter.on('unload', () => {
         if (pollingInterval) {
             clearInterval(pollingInterval);
+            pollingInterval = null;
         }
-        client.disconnect();
+        if (clientInstance) {
+            clientInstance.disconnect();
+            clientInstance = null;
+        }
     });
 }
 
@@ -703,7 +595,16 @@ function setupStateHandlers(adapter, client) {
         if (!state || state.ack) return;
 
         const stateName = id.replace(adapter.namespace + '.ac.', '');
-        let currentStatus = parseACStatus(await client.getStatus());
+        let currentStatus = null;
+
+        try {
+            const statusData = await client.getStatus();
+            if (statusData) {
+                currentStatus = parseACStatus(statusData);
+            }
+        } catch (e) {
+            adapter.log.warn('Cannot get current status: ' + e.message);
+        }
 
         if (!currentStatus) {
             adapter.log.warn('Cannot get current status for setting');
@@ -775,83 +676,197 @@ function setupStateHandlers(adapter, client) {
     });
 }
 
-async function main() {
-    const adapter = new (require('@iobroker/adapter-core').Adapter)({
-        name: adapterName,
-        ready: async () => {
-            adapter.log.info('Midea AC LAN adapter starting...');
+function saveConfigFile(adapter) {
+    const configFile = path.join(__dirname, '..', 'midea_config_' + adapter.config.device_id + '.json');
+    const configData = {
+        ip_address: adapter.config.ip_address,
+        device_id: adapter.config.device_id,
+        token: adapter.config.token,
+        key: adapter.config.key
+    };
+    try {
+        fs.writeFileSync(configFile, JSON.stringify(configData, null, 2));
+        adapter.log.info('Config saved to ' + configFile);
+    } catch (e) {
+        adapter.log.error('Failed to save config file: ' + e.message);
+    }
+}
 
-            if (!adapter.config.ip_address || !adapter.config.device_id) {
-                adapter.log.error('IP address and Device ID are required!');
-                adapter.terminate('Configuration missing');
-                return;
+function loadConfigFile(adapter) {
+    const configFile = path.join(__dirname, '..', 'midea_config_' + adapter.config.device_id + '.json');
+
+    if (fs.existsSync(configFile)) {
+        try {
+            const configData = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+            if (configData.token && configData.key) {
+                adapter.config.token = configData.token;
+                adapter.config.key = configData.key;
+                return true;
             }
-
-            if (adapter.config.use_cloud_auth) {
-                if (!adapter.config.cloud_username || !adapter.config.cloud_password) {
-                    adapter.log.error('Cloud credentials required when use_cloud_auth is enabled!');
-                    adapter.terminate('Cloud credentials missing');
-                    return;
-                }
-            }
-
-            const hasTokenAndKey = adapter.config.token && adapter.config.key;
-
-            if (!hasTokenAndKey && adapter.config.use_cloud_auth) {
-                const cloudSuccess = await fetchTokenFromCloud(adapter);
-                if (!cloudSuccess) {
-                    adapter.log.error('Failed to get token from cloud');
-                    adapter.terminate('Cloud auth failed');
-                    return;
-                }
-                adapter.log.info('Cloud auth successful, token obtained');
-            } else if (!hasTokenAndKey && !adapter.config.use_cloud_auth) {
-                const loaded = loadConfig(adapter);
-                if (!loaded || !adapter.config.token || !adapter.config.key) {
-                    adapter.log.error('No token/key available. Please enable cloud auth or provide config file.');
-                    adapter.terminate('No token/key available');
-                    return;
-                }
-                adapter.log.info('Loaded config from file');
-            }
-
-            saveConfig(adapter);
-
-            createStateObjects(adapter);
-
-            const client = new MideaACClient(
-                adapter.config.ip_address,
-                PORT_TCP,
-                adapter.config.token,
-                adapter.config.key,
-                parseInt(adapter.config.device_id)
-            );
-
-            const status = await connectAndGetStatus(adapter, client);
-            if (!status) {
-                adapter.log.error('Failed to get AC status');
-                adapter.terminate('Failed to get status');
-                return;
-            }
-
-            const parsed = parseACStatus(status);
-            adapter.log.info('AC Status: Power=' + parsed.power + ', Mode=' + parsed.mode +
-                ', Temp=' + parsed.targetTemp + ', Fan=' + parsed.fanSpeed +
-                ', SwingV=' + parsed.swingVertical + ', SwingH=' + parsed.swingHorizontal);
-
-            updateStates(adapter, parsed);
-
-            startPolling(adapter, client);
-
-            setupStateHandlers(adapter, client);
-
-            adapter.log.info('Midea AC LAN adapter started successfully');
+        } catch (e) {
+            adapter.log.warn('Failed to load config file: ' + e.message);
         }
+    }
+    return false;
+}
+
+async function fetchTokenFromCloud(adapter) {
+    return new Promise((resolve) => {
+        const postData = JSON.stringify({
+            userId: adapter.config.cloud_username,
+            password: adapter.config.cloud_password
+        });
+
+        const options = {
+            hostname: 'midea-app.iobroker.uk',
+            port: 443,
+            path: '/api/v1/login/login',
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(postData)
+            }
+        };
+
+        const req = https.request(options, (response) => {
+            let data = '';
+            response.on('data', (chunk) => data += chunk);
+            response.on('end', () => {
+                try {
+                    const result = JSON.parse(data);
+                    if (result.result && result.result.token && result.result.iotKey) {
+                        adapter.config.token = result.result.token;
+                        adapter.config.key = result.result.iotKey;
+                        adapter.log.info('Cloud auth successful');
+                        resolve(true);
+                    } else {
+                        adapter.log.error('Cloud auth failed: ' + JSON.stringify(result));
+                        resolve(false);
+                    }
+                } catch (e) {
+                    adapter.log.error('Cloud auth parse error: ' + e.message);
+                    resolve(false);
+                }
+            });
+        });
+
+        req.on('error', (e) => {
+            adapter.log.error('Cloud auth request failed: ' + e.message);
+            resolve(false);
+        });
+
+        req.write(postData);
+        req.end();
     });
 }
 
-if (module.parent) {
-    module.exports = { adapter: adapterName };
-} else {
-    main();
-}
+const adapter = new (require('@iobroker/adapter-core').Adapter)({
+    name: adapterName,
+    ready: async () => {
+        adapter.log.info('Midea AC LAN adapter starting...');
+
+        if (!adapter.config.ip_address || !adapter.config.device_id) {
+            adapter.log.error('IP address and Device ID are required!');
+            adapter.terminate('Configuration missing');
+            return;
+        }
+
+        if (adapter.config.use_cloud_auth) {
+            if (!adapter.config.cloud_username || !adapter.config.cloud_password) {
+                adapter.log.error('Cloud credentials required when use_cloud_auth is enabled!');
+                adapter.terminate('Cloud credentials missing');
+                return;
+            }
+        }
+
+        const hasTokenAndKey = adapter.config.token && adapter.config.key;
+
+        if (!hasTokenAndKey && adapter.config.use_cloud_auth) {
+            const cloudSuccess = await fetchTokenFromCloud(adapter);
+            if (!cloudSuccess) {
+                adapter.log.error('Failed to get token from cloud');
+                adapter.terminate('Cloud auth failed');
+                return;
+            }
+            adapter.log.info('Cloud auth successful, token obtained');
+        } else if (!hasTokenAndKey && !adapter.config.use_cloud_auth) {
+            const loaded = loadConfigFile(adapter);
+            if (!loaded || !adapter.config.token || !adapter.config.key) {
+                adapter.log.error('No token/key available. Please enable cloud auth or provide config file.');
+                adapter.terminate('No token/key available');
+                return;
+            }
+            adapter.log.info('Loaded config from file');
+        }
+
+        saveConfigFile(adapter);
+
+        createStateObjects(adapter);
+
+        const client = new MideaACClient(
+            adapter.config.ip_address,
+            PORT_TCP,
+            adapter.config.token,
+            adapter.config.key,
+            parseInt(adapter.config.device_id)
+        );
+        clientInstance = client;
+
+        const status = await connectAndGetStatus(adapter, client);
+        if (!status) {
+            adapter.log.error('Failed to get AC status');
+            adapter.terminate('Failed to get status');
+            return;
+        }
+
+        const parsed = parseACStatus(status);
+        adapter.log.info('AC Status: Power=' + parsed.power + ', Mode=' + parsed.mode +
+            ', Temp=' + parsed.targetTemp + ', Fan=' + parsed.fanSpeed +
+            ', SwingV=' + parsed.swingVertical + ', SwingH=' + parsed.swingHorizontal);
+
+        updateStates(adapter, parsed);
+
+        startPolling(adapter, client, adapter.config.poll_interval || 60);
+
+        setupStateHandlers(adapter, client);
+
+        adapter.log.info('Midea AC LAN adapter started successfully');
+    },
+
+    message: (obj) => {
+        if (obj.command === 'testConnection') {
+            const settings = obj.message;
+            const testClient = new MideaACClient(
+                settings.ip_address,
+                PORT_TCP,
+                settings.token,
+                settings.key,
+                parseInt(settings.device_id)
+            );
+
+            testClient.connect().then(connected => {
+                if (!connected) {
+                    adapter.sendTo(obj.from, obj.command, { success: false, error: 'Connection failed' }, obj.callback);
+                    return;
+                }
+                testClient.authenticate().then(authenticated => {
+                    if (!authenticated) {
+                        testClient.disconnect();
+                        adapter.sendTo(obj.from, obj.command, { success: false, error: 'Authentication failed' }, obj.callback);
+                        return;
+                    }
+                    testClient.getStatus().then(status => {
+                        testClient.disconnect();
+                        if (status && status.length > 0) {
+                            adapter.sendTo(obj.from, obj.command, { success: true }, obj.callback);
+                        } else {
+                            adapter.sendTo(obj.from, obj.command, { success: false, error: 'No status received' }, obj.callback);
+                        }
+                    });
+                });
+            });
+        }
+    }
+});
+
+module.exports = adapter;
