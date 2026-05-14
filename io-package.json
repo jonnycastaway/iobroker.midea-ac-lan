@@ -23,8 +23,9 @@
       "ac",
       "air conditioning"
     ],
-    "height": 600,
-    "width": 800
+    "adminUI": {
+      "config": "json"
+    }
   },
   "native": {
     "ip_address": "",
