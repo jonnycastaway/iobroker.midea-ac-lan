@@ -435,9 +435,21 @@ class MideaAcAdapter extends utils.Adapter {
         this._updateStates(parsed);
 
         this._pollInterval = setInterval(async () => {
+            this.log.info('Poll tick...');
             try {
                 const s = await this._client.getStatus();
-                if (s) this._updateStates(parseACStatus(s));
+                if (s) {
+                    this._updateStates(parseACStatus(s));
+                    this.log.info('Poll update successful');
+                } else {
+                    this.log.warn('Poll returned null - reconnecting...');
+                    this._client.disconnect();
+                    const connected = await this._client.connect();
+                    if (!connected) { this.log.error('Reconnect failed'); return; }
+                    const authenticated = await this._client.authenticate();
+                    if (!authenticated) { this.log.error('Re-auth failed'); return; }
+                    this.log.info('Reconnected and re-authenticated');
+                }
             } catch (e) { this.log.error('Poll error: ' + e.message); }
         }, (this.config.poll_interval || 60) * 1000);
 
