@@ -8,8 +8,8 @@
       "de": "Midea AC LAN"
     },
     "desc": {
-      "en": "Midea AC Local Network Controller - Control Midea air conditioners without cloud",
-      "de": "Midea AC LAN-Controller - Steuerung ohne Cloud"
+      "en": "Midea AC Local Network Controller",
+      "de": "Midea AC LAN-Controller"
     },
     "platform": "Javascript/Node.js",
     "mode": "daemon",
@@ -22,7 +22,9 @@
       "midea",
       "ac",
       "air conditioning"
-    ]
+    ],
+    "height": 600,
+    "width": 800
   },
   "native": {
     "ip_address": "",
