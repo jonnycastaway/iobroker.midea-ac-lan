@@ -434,24 +434,39 @@ class MideaAcAdapter extends utils.Adapter {
         this.log.info('AC Status parsed - Power=' + parsed.power + ', Mode=' + parsed.mode + ', Temp=' + parsed.targetTemp + ', Fan=' + parsed.fanSpeed + ', SwingV=' + parsed.swingVertical + ', SwingH=' + parsed.swingHorizontal + ', Indoor=' + parsed.indoorTemp);
         this._updateStates(parsed);
 
-        this._pollInterval = setInterval(async () => {
-            this.log.info('Poll tick...');
-            try {
-                const s = await this._client.getStatus();
-                if (s) {
-                    this._updateStates(parseACStatus(s));
-                    this.log.info('Poll update successful');
-                } else {
-                    this.log.warn('Poll returned null - reconnecting...');
-                    this._client.disconnect();
-                    const connected = await this._client.connect();
-                    if (!connected) { this.log.error('Reconnect failed'); return; }
-                    const authenticated = await this._client.authenticate();
-                    if (!authenticated) { this.log.error('Re-auth failed'); return; }
-                    this.log.info('Reconnected and re-authenticated');
-                }
-            } catch (e) { this.log.error('Poll error: ' + e.message); }
-        }, (this.config.poll_interval || 60) * 1000);
+        async _ensureConnected() {
+        if (this._client && this._client._socket && this._client._socket.writable) {
+            return true;
+        }
+        if (this._client) this._client.disconnect();
+        this._client = new MideaACClient(
+            this.config.ip_address, PORT_TCP,
+            this.config.token, this.config.key,
+            parseInt(this.config.device_id)
+        );
+        const connected = await this._client.connect();
+        if (!connected) { this.log.error('Connection failed'); return false; }
+        const authenticated = await this._client.authenticate();
+        if (!authenticated) { this.log.error('Authentication failed'); return false; }
+        this.log.info('Reconnected successfully');
+        return true;
+    }
+
+    _pollInterval = setInterval(async () => {
+        this.log.info('Poll tick...');
+        try {
+            const connected = await this._ensureConnected();
+            if (!connected) return;
+
+            const s = await this._client.getStatus();
+            if (s) {
+                this._updateStates(parseACStatus(s));
+                this.log.info('Poll update successful');
+            } else {
+                this.log.warn('Poll returned null');
+            }
+        } catch (e) { this.log.error('Poll error: ' + e.message); }
+    }, (this.config.poll_interval || 60) * 1000);
 
         this.log.info('Adapter started successfully');
     }
